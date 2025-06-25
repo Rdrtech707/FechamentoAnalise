@@ -30,7 +30,7 @@ def get_ordens(conn) -> pd.DataFrame:
 def get_contas(conn) -> pd.DataFrame:
     """
     Extrai dados da tabela CONTAS:
-    - TIPO, COD_CLIENTE, PAGO, OBSERVACAO,
+    - CODIGO, TIPO, COD_CLIENTE, PAGO, OBSERVACAO,
       VALOR, REFERENCIA, ECF_DINHEIRO, ECF_CARTAO,
       ECF_TROCO, DATA_PGTO
     """
