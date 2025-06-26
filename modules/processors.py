@@ -40,6 +40,9 @@ def process_recebimentos(
     contas['DINHEIRO'] = contas['ECF_DINHEIRO'] - contas.get(5,0)
     contas['PIX'] = contas['ECF_DINHEIRO'] - contas.get(0,0)
 
+    # --- Garante que DATA_PGTO seja datetime válido ---
+    contas['DATA_PGTO'] = pd.to_datetime(contas['DATA_PGTO'], errors='coerce')
+
 # --- Agrega por OS com DATA_PGTO ---
     agg = contas.groupby('OS').agg({
         'COD_CLIENTE':'first',

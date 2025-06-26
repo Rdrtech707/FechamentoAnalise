@@ -24,9 +24,9 @@ def main():
 
     # Reordena colunas
     recibos = recibos[[
-        'N° OS','DATA ENCERRAMENTO','VALOR TOTAL','VALOR MÃO DE OBRA',
+        'N° OS','DATA PGTO','VALOR TOTAL','VALOR MÃO DE OBRA',
         'VALOR PEÇAS','DESCONTO','VALOR PAGO','CARTÃO','DINHEIRO',
-        'PIX','TROCO','VEÍCULO (PLACA)','CÓDIGO CLIENTE'
+        'PIX','TROCO','VEÍCULO (PLACA)','CÓDIGO CLIENTE','DATA ENCERRAMENTO'
     ]]
 
     # Filtra pelo período desejado baseado em DATA_PGTO
