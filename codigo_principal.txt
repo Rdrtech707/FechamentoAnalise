@@ -1,0 +1,224 @@
+# ================= app.py =================
+# Arquivo: app.py
+
+from config import MDB_FILE, MDB_PASSWORD
+from modules.access_db import get_connection
+from modules.extractors import get_ordens, get_contas, get_fcaixa
+from modules.processors import process_recebimentos
+from modules.exporters import export_to_excel
+
+
+def main():
+    # Pergunta mês e ano ao usuário
+    year = input("Informe o ano (YYYY): ").strip()
+    month = input("Informe o mês (MM): ").strip().zfill(2)
+    periodo = f"{year}-{month}"
+
+    # Conecta e extrai dados
+    conn = get_connection(MDB_FILE, MDB_PASSWORD)
+    ordens_df = get_ordens(conn)
+    contas_df = get_contas(conn)
+    fcaixa_df = get_fcaixa(conn)
+
+    # Processa recebimentos
+    recibos = process_recebimentos(ordens_df, contas_df, fcaixa_df)
+
+    # Reordena colunas
+    recibos = recibos[[
+        'N° OS','DATA PGTO','VALOR TOTAL','VALOR MÃO DE OBRA',
+        'VALOR PEÇAS','DESCONTO','VALOR PAGO','CARTÃO','DINHEIRO',
+        'PIX','TROCO','VEÍCULO (PLACA)','CÓDIGO CLIENTE','DATA ENCERRAMENTO'
+    ]]
+
+    # Filtra pelo período desejado baseado em DATA_PGTO
+    valid = recibos.dropna(subset=['DATA PGTO']).copy()
+    valid['MES'] = valid['DATA PGTO'].dt.strftime('%Y-%m')
+
+    if periodo in valid['MES'].unique():
+        df_periodo = valid[valid['MES'] == periodo].drop(columns='MES')
+        export_to_excel({periodo: df_periodo}, output_dir='data/recebimentos')
+        print(f"Arquivo gerado: data/recebimentos/Recebimentos_{periodo}.xlsx")
+    else:
+        print(f"Nenhum registro encontrado para o período {periodo}.")
+
+if __name__ == '__main__':
+    main()
+
+
+# ================= modules/access_db.py =================
+# Arquivo: modules/access_db.py
+
+import pyodbc
+
+
+def get_connection(mdb_file: str, password: str):
+    """
+    Conecta ao .mdb/.accdb usando ODBC.
+    """
+    conn_str = (
+        r"DRIVER={Microsoft Access Driver (*.mdb, *.accdb)};"
+        rf"DBQ={mdb_file};"
+        rf"PWD={password};"
+    )
+    return pyodbc.connect(conn_str)
+
+
+# ================= modules/extractors.py =================
+# Arquivo: modules/extractors.py
+
+import pandas as pd
+
+
+def get_ordens(conn) -> pd.DataFrame:
+    """
+    Extrai dados da tabela ORDEMS, excluindo serviços com SITUACAO = 11.
+    """
+    query = """
+    SELECT
+        CODIGO,
+        SAIDA,
+        V_MAO,
+        V_PECAS,
+        V_DESLOCA,
+        V_TERCEIRO,
+        V_OUTROS,
+        APARELHO,
+        MODELO,
+        SITUACAO
+    FROM ORDEMS
+    """
+    df = pd.read_sql_query(query, conn, parse_dates=["SAIDA"])
+    # Exclui ordens com SITUACAO == 11
+    df = df[df['SITUACAO'] != 11].copy()
+    # Remove coluna SITUACAO
+    return df.drop(columns=['SITUACAO'])
+
+
+def get_contas(conn) -> pd.DataFrame:
+    """
+    Extrai dados da tabela CONTAS:
+    - CODIGO, TIPO, COD_CLIENTE, PAGO, OBSERVACAO,
+      VALOR, REFERENCIA, ECF_DINHEIRO, ECF_CARTAO,
+      ECF_TROCO, DATA_PGTO
+    """
+    query = """
+    SELECT
+        CODIGO,
+        TIPO,
+        COD_CLIENTE,
+        PAGO,
+        OBSERVACAO,
+        VALOR,
+        REFERENCIA,
+        ECF_DINHEIRO,
+        ECF_CARTAO,
+        ECF_TROCO,
+        DATA_PGTO
+    FROM CONTAS
+    """
+    df = pd.read_sql_query(query, conn, parse_dates=["DATA_PGTO"])
+    return df
+
+
+def get_fcaixa(conn) -> pd.DataFrame:
+    """
+    Extrai dados da tabela FCAIXA:
+    - RECEITA, COD_CONTA, FORMA
+    """
+    query = """
+    SELECT
+        RECEITA,
+        COD_CONTA,
+        FORMA
+    FROM FCAIXA
+    """
+    df = pd.read_sql_query(query, conn)
+    return df
+
+
+# ================= modules/processors.py =================
+# Arquivo: modules/processors.py
+import pandas as pd
+
+
+def process_recebimentos(
+    ordens_df: pd.DataFrame,
+    contas_df: pd.DataFrame,
+    fcaixa_df: pd.DataFrame
+) -> pd.DataFrame:
+    """
+    Monta a tabela consolidada de recebimentos:
+    Colunas: N° OS, DATA ENCERRAMENTO, VALOR TOTAL, VALOR MÃO DE OBRA,
+             VALOR PEÇAS, DESCONTO, VEÍCULO (PLACA), CÓDIGO CLIENTE,
+             VALOR PAGO, CARTÃO, DINHEIRO, PIX, TROCO
+    """
+    # --- Prepara ordens ---
+    ordens = ordens_df.copy()
+    ordens['VALOR TOTAL'] = ordens[['V_MAO','V_PECAS','V_DESLOCA','V_TERCEIRO','V_OUTROS']].sum(axis=1)
+    ordens['VEÍCULO (PLACA)'] = ordens['APARELHO'] + ' (' + ordens['MODELO'] + ')'
+    ordens_proc = ordens.rename(columns={
+        'CODIGO':'N° OS', 'SAIDA':'DATA ENCERRAMENTO',
+        'V_MAO':'VALOR MÃO DE OBRA','V_PECAS':'VALOR PEÇAS','V_OUTROS':'DESCONTO'
+    })[['N° OS','DATA ENCERRAMENTO','VALOR TOTAL','VALOR MÃO DE OBRA','VALOR PEÇAS','DESCONTO','VEÍCULO (PLACA)']]
+
+    # --- Prepara FCAIXA ---
+    fcaixa = fcaixa_df.copy()
+    fcaixa['COD_CONTA'] = pd.to_numeric(fcaixa['COD_CONTA'], errors='coerce').fillna(0).astype(int)
+    fcaixa_sum = fcaixa.groupby(['COD_CONTA','FORMA'])['RECEITA'].sum().unstack(fill_value=0)
+    for forma in (0,5):
+        if forma not in fcaixa_sum.columns:
+            fcaixa_sum[forma] = 0
+
+    # --- Prepara CONTAS e faz merge ---
+    contas = contas_df.copy()
+    contas['CODIGO'] = pd.to_numeric(contas['CODIGO'], errors='coerce').fillna(0).astype(int)
+    contas['OS'] = contas['REFERENCIA'].astype(str).str.extract(r'^O(\d+)$', expand=False)
+    contas = contas.dropna(subset=['OS']).copy()
+    contas['OS'] = contas['OS'].astype(int)
+    contas = contas.merge(fcaixa_sum, left_on='CODIGO', right_index=True, how='left').fillna(0)
+    contas['DINHEIRO'] = contas['ECF_DINHEIRO'] - contas.get(5,0)
+    contas['PIX'] = contas['ECF_DINHEIRO'] - contas.get(0,0)
+
+    # --- Garante que DATA_PGTO seja datetime válido ---
+    contas['DATA_PGTO'] = pd.to_datetime(contas['DATA_PGTO'], errors='coerce')
+
+# --- Agrega por OS com DATA_PGTO ---
+    agg = contas.groupby('OS').agg({
+        'COD_CLIENTE':'first',
+        'VALOR':'sum',
+        'ECF_CARTAO':'sum',
+        'DINHEIRO':'sum',
+        'PIX':'sum',
+        'ECF_TROCO':'sum',
+        'DATA_PGTO':'max'
+    }).rename(columns={
+        'COD_CLIENTE':'CÓDIGO CLIENTE',
+        'VALOR':'VALOR PAGO',
+        'ECF_CARTAO':'CARTÃO',
+        'ECF_TROCO':'TROCO',
+        'DATA_PGTO':'DATA PGTO'
+    })
+
+    final = ordens_proc.merge(agg, left_on='N° OS', right_index=True, how='left')
+    return final
+
+
+# ================= modules/exporters.py =================
+# Arquivo: modules/exporters.py
+
+import os
+
+#from pathlib import Path
+
+
+def export_to_excel(dataframes_by_month: dict, output_dir: str):
+    os.makedirs(output_dir, exist_ok=True)
+    for month, df in dataframes_by_month.items():
+        filepath = os.path.join(output_dir, f"Recebimentos_{month}.xlsx")
+        df.to_excel(filepath, index=False)
+
+
+# ================= utils/helpers.py =================
+# Arquivo: utils/helpers.py
+
+# (arquivo vazio) 
