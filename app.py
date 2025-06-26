@@ -1,11 +1,9 @@
-# Arquivo: app.py
-
+import pandas as pd
 from config import MDB_FILE, MDB_PASSWORD
 from modules.access_db import get_connection
 from modules.extractors import get_ordens, get_contas, get_fcaixa
 from modules.processors import process_recebimentos
 from modules.exporters import export_to_excel
-
 
 def main():
     # Pergunta mês e ano ao usuário
@@ -22,16 +20,20 @@ def main():
     # Processa recebimentos
     recibos = process_recebimentos(ordens_df, contas_df, fcaixa_df)
 
+    # Remove hora, mantendo apenas a data
+    recibos['DATA PGTO'] = pd.to_datetime(recibos['DATA PGTO']).dt.date
+    recibos['DATA ENCERRAMENTO'] = pd.to_datetime(recibos['DATA ENCERRAMENTO']).dt.date
+
     # Reordena colunas
     recibos = recibos[[
-        'N° OS','DATA PGTO','VALOR TOTAL','VALOR MÃO DE OBRA',
-        'VALOR PEÇAS','DESCONTO','VALOR PAGO','CARTÃO','DINHEIRO',
-        'PIX','TROCO','VEÍCULO (PLACA)','CÓDIGO CLIENTE','DATA ENCERRAMENTO'
+        'N° OS', 'DATA PGTO', 'VALOR TOTAL', 'VALOR MÃO DE OBRA',
+        'VALOR PEÇAS', 'DESCONTO', 'VALOR PAGO', 'CARTÃO', 'DINHEIRO',
+        'PIX', 'TROCO', 'VEÍCULO (PLACA)', 'CÓDIGO CLIENTE', 'DATA ENCERRAMENTO'
     ]]
 
-    # Filtra pelo período desejado baseado em DATA_PGTO
+    # Filtra pelo período desejado baseado em DATA PGTO
     valid = recibos.dropna(subset=['DATA PGTO']).copy()
-    valid['MES'] = valid['DATA PGTO'].dt.strftime('%Y-%m')
+    valid['MES'] = valid['DATA PGTO'].astype(str).str.slice(0, 7)
 
     if periodo in valid['MES'].unique():
         df_periodo = valid[valid['MES'] == periodo].drop(columns='MES')
