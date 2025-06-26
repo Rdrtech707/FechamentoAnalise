@@ -40,13 +40,21 @@ def process_recebimentos(
     contas['DINHEIRO'] = contas['ECF_DINHEIRO'] - contas.get(5,0)
     contas['PIX'] = contas['ECF_DINHEIRO'] - contas.get(0,0)
 
-    # --- Agrega por OS ---
+# --- Agrega por OS com DATA_PGTO ---
     agg = contas.groupby('OS').agg({
-        'COD_CLIENTE':'first','VALOR':'sum',
-        'ECF_CARTAO':'sum','DINHEIRO':'sum','PIX':'sum','ECF_TROCO':'sum'
+        'COD_CLIENTE':'first',
+        'VALOR':'sum',
+        'ECF_CARTAO':'sum',
+        'DINHEIRO':'sum',
+        'PIX':'sum',
+        'ECF_TROCO':'sum',
+        'DATA_PGTO':'max'
     }).rename(columns={
-        'COD_CLIENTE':'CÓDIGO CLIENTE','VALOR':'VALOR PAGO',
-        'ECF_CARTAO':'CARTÃO','ECF_TROCO':'TROCO'
+        'COD_CLIENTE':'CÓDIGO CLIENTE',
+        'VALOR':'VALOR PAGO',
+        'ECF_CARTAO':'CARTÃO',
+        'ECF_TROCO':'TROCO',
+        'DATA_PGTO':'DATA PGTO'
     })
 
     final = ordens_proc.merge(agg, left_on='N° OS', right_index=True, how='left')
