@@ -1,6 +1,7 @@
 # ================= app.py =================
 # Arquivo: app.py
 
+import pandas as pd
 from config import MDB_FILE, MDB_PASSWORD
 from modules.access_db import get_connection
 from modules.extractors import get_ordens, get_contas, get_fcaixa
@@ -23,16 +24,20 @@ def main():
     # Processa recebimentos
     recibos = process_recebimentos(ordens_df, contas_df, fcaixa_df)
 
+    # Remove hora, mantendo apenas a data
+    recibos['DATA PGTO'] = pd.to_datetime(recibos['DATA PGTO']).dt.date
+    recibos['DATA ENCERRAMENTO'] = pd.to_datetime(recibos['DATA ENCERRAMENTO']).dt.date
+
     # Reordena colunas
     recibos = recibos[[
-        'N° OS','DATA PGTO','VALOR TOTAL','VALOR MÃO DE OBRA',
-        'VALOR PEÇAS','DESCONTO','VALOR PAGO','CARTÃO','DINHEIRO',
-        'PIX','TROCO','VEÍCULO (PLACA)','CÓDIGO CLIENTE','DATA ENCERRAMENTO'
+        'N° OS', 'DATA PGTO', 'VALOR TOTAL', 'VALOR MÃO DE OBRA',
+        'VALOR PEÇAS', 'DESCONTO', 'VALOR PAGO', 'CARTÃO', 'DINHEIRO',
+        'PIX', 'TROCO', 'VEÍCULO (PLACA)', 'CÓDIGO CLIENTE', 'DATA ENCERRAMENTO'
     ]]
 
-    # Filtra pelo período desejado baseado em DATA_PGTO
+    # Filtra pelo período desejado baseado em DATA PGTO
     valid = recibos.dropna(subset=['DATA PGTO']).copy()
-    valid['MES'] = valid['DATA PGTO'].dt.strftime('%Y-%m')
+    valid['MES'] = valid['DATA PGTO'].astype(str).str.slice(0, 7)
 
     if periodo in valid['MES'].unique():
         df_periodo = valid[valid['MES'] == periodo].drop(columns='MES')
@@ -43,6 +48,20 @@ def main():
 
 if __name__ == '__main__':
     main()
+
+
+# ================= config.py =================
+# Arquivo: config.py
+
+import os
+from dotenv import load_dotenv
+
+# Carrega variáveis de ambiente do arquivo .env
+load_dotenv()
+
+# Caminho para o arquivo .mdb e senha
+MDB_FILE = os.getenv("MDB_FILE")
+MDB_PASSWORD = os.getenv("MDB_PASSWORD")
 
 
 # ================= modules/access_db.py =================
@@ -157,48 +176,63 @@ def process_recebimentos(
     ordens['VALOR TOTAL'] = ordens[['V_MAO','V_PECAS','V_DESLOCA','V_TERCEIRO','V_OUTROS']].sum(axis=1)
     ordens['VEÍCULO (PLACA)'] = ordens['APARELHO'] + ' (' + ordens['MODELO'] + ')'
     ordens_proc = ordens.rename(columns={
-        'CODIGO':'N° OS', 'SAIDA':'DATA ENCERRAMENTO',
-        'V_MAO':'VALOR MÃO DE OBRA','V_PECAS':'VALOR PEÇAS','V_OUTROS':'DESCONTO'
-    })[['N° OS','DATA ENCERRAMENTO','VALOR TOTAL','VALOR MÃO DE OBRA','VALOR PEÇAS','DESCONTO','VEÍCULO (PLACA)']]
+        'CODIGO': 'N° OS',
+        'SAIDA': 'DATA ENCERRAMENTO',
+        'V_MAO': 'VALOR MÃO DE OBRA',
+        'V_PECAS': 'VALOR PEÇAS',
+        'V_OUTROS': 'DESCONTO'
+    })[[
+        'N° OS','DATA ENCERRAMENTO','VALOR TOTAL',
+        'VALOR MÃO DE OBRA','VALOR PEÇAS','DESCONTO','VEÍCULO (PLACA)'
+    ]]
 
-    # --- Prepara FCAIXA ---
+    # --- Prepara FCAIXA: extrai código numérico e soma receitas por forma ---
     fcaixa = fcaixa_df.copy()
-    fcaixa['COD_CONTA'] = pd.to_numeric(fcaixa['COD_CONTA'], errors='coerce').fillna(0).astype(int)
-    fcaixa_sum = fcaixa.groupby(['COD_CONTA','FORMA'])['RECEITA'].sum().unstack(fill_value=0)
-    for forma in (0,5):
-        if forma not in fcaixa_sum.columns:
-            fcaixa_sum[forma] = 0
+    fcaixa['COD_CONTA'] = (
+        fcaixa['COD_CONTA']
+        .astype(str)
+        .str.extract(r'R(\d+)', expand=False)
+        .fillna('0')
+        .astype(int)
+    )
+    pix_receita = fcaixa[fcaixa['FORMA'] == 5].groupby('COD_CONTA')['RECEITA'].sum()
+    dinheiro_receita = fcaixa[fcaixa['FORMA'] == 0].groupby('COD_CONTA')['RECEITA'].sum()
 
-    # --- Prepara CONTAS e faz merge ---
+    # --- Prepara CONTAS e faz merge com receitas isoladas ---
     contas = contas_df.copy()
     contas['CODIGO'] = pd.to_numeric(contas['CODIGO'], errors='coerce').fillna(0).astype(int)
     contas['OS'] = contas['REFERENCIA'].astype(str).str.extract(r'^O(\d+)$', expand=False)
     contas = contas.dropna(subset=['OS']).copy()
     contas['OS'] = contas['OS'].astype(int)
-    contas = contas.merge(fcaixa_sum, left_on='CODIGO', right_index=True, how='left').fillna(0)
-    contas['DINHEIRO'] = contas['ECF_DINHEIRO'] - contas.get(5,0)
-    contas['PIX'] = contas['ECF_DINHEIRO'] - contas.get(0,0)
+    contas = contas.merge(pix_receita.rename('RECEITA_PIX'),
+                          left_on='CODIGO', right_index=True, how='left')
+    contas = contas.merge(dinheiro_receita.rename('RECEITA_DINHEIRO'),
+                          left_on='CODIGO', right_index=True, how='left')
+    contas = contas.fillna(0)
 
-    # --- Garante que DATA_PGTO seja datetime válido ---
+    # --- Cálculo de DINHEIRO e PIX conforme regra correta ---
+    contas['DINHEIRO'] = contas['ECF_DINHEIRO'] - contas['RECEITA_PIX']
+    contas['PIX'] = contas['ECF_DINHEIRO'] - contas['RECEITA_DINHEIRO']
+
+    # --- Garante que DATA_PGTO seja datetime e agrega por OS ---
     contas['DATA_PGTO'] = pd.to_datetime(contas['DATA_PGTO'], errors='coerce')
-
-# --- Agrega por OS com DATA_PGTO ---
     agg = contas.groupby('OS').agg({
-        'COD_CLIENTE':'first',
-        'VALOR':'sum',
-        'ECF_CARTAO':'sum',
-        'DINHEIRO':'sum',
-        'PIX':'sum',
-        'ECF_TROCO':'sum',
-        'DATA_PGTO':'max'
+        'COD_CLIENTE': 'first',
+        'VALOR': 'sum',
+        'ECF_CARTAO': 'sum',
+        'DINHEIRO': 'sum',
+        'PIX': 'sum',
+        'ECF_TROCO': 'sum',
+        'DATA_PGTO': 'max'
     }).rename(columns={
-        'COD_CLIENTE':'CÓDIGO CLIENTE',
-        'VALOR':'VALOR PAGO',
-        'ECF_CARTAO':'CARTÃO',
-        'ECF_TROCO':'TROCO',
-        'DATA_PGTO':'DATA PGTO'
+        'COD_CLIENTE': 'CÓDIGO CLIENTE',
+        'VALOR': 'VALOR PAGO',
+        'ECF_CARTAO': 'CARTÃO',
+        'ECF_TROCO': 'TROCO',
+        'DATA_PGTO': 'DATA PGTO'
     })
 
+    # --- Merge final com as ordens ---
     final = ordens_proc.merge(agg, left_on='N° OS', right_index=True, how='left')
     return final
 
@@ -207,18 +241,58 @@ def process_recebimentos(
 # Arquivo: modules/exporters.py
 
 import os
-
-#from pathlib import Path
+import pandas as pd
+from openpyxl.utils import get_column_letter
+from openpyxl.styles import Alignment
 
 
 def export_to_excel(dataframes_by_month: dict, output_dir: str):
+    """
+    Salva cada DataFrame em planilhas Excel separadas por mês,
+    ajustando automaticamente a largura das colunas e formatando
+    colunas numéricas em estilo contábil com duas casas decimais.
+
+    - dataframes_by_month: {"YYYY-MM": pd.DataFrame}
+    - output_dir: pasta onde salvar os arquivos
+    """
     os.makedirs(output_dir, exist_ok=True)
+
+    contabeis = [
+        "VALOR TOTAL", "VALOR MÃO DE OBRA", "VALOR PEÇAS",
+        "DESCONTO", "VALOR PAGO", "CARTÃO", "DINHEIRO",
+        "PIX", "TROCO"
+    ]
+
     for month, df in dataframes_by_month.items():
         filepath = os.path.join(output_dir, f"Recebimentos_{month}.xlsx")
-        df.to_excel(filepath, index=False)
+        with pd.ExcelWriter(filepath, engine='openpyxl') as writer:
+            sheet_name = month
+            df.to_excel(writer, sheet_name=sheet_name, index=False)
+            ws = writer.sheets[sheet_name]
+
+            for idx, col in enumerate(df.columns, start=1):
+                # Ajusta largura de cada coluna com base no conteúdo
+                max_length = max(
+                    df[col].astype(str).map(len).max(),
+                    len(col)
+                ) + 2
+                ws.column_dimensions[get_column_letter(idx)].width = max_length
+
+                # Aplica formatação contábil para colunas numéricas
+                if col in contabeis:
+                    for cell in ws[get_column_letter(idx)][1:]:
+                        cell.number_format = 'R$ #,##0.00'
+                        cell.alignment = Alignment(horizontal='left')
 
 
 # ================= utils/helpers.py =================
 # Arquivo: utils/helpers.py
 
-# (arquivo vazio) 
+# (arquivo vazio)
+
+
+# ================= requirements.txt =================
+pyodbc
+pandas
+python-dotenv
+openpyxl 
