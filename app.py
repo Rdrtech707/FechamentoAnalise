@@ -18,7 +18,7 @@ def main():
     fcaixa_df = get_fcaixa(conn)
 
     # Processa recebimentos
-    recibos = process_recebimentos(ordens_df, contas_df, fcaixa_df)
+    recibos = process_recebimentos(ordens_df, contas_df, fcaixa_df, periodo)
 
     # Remove hora, mantendo apenas a data
     recibos['DATA PGTO'] = pd.to_datetime(recibos['DATA PGTO']).dt.date
@@ -27,7 +27,7 @@ def main():
     # Reordena colunas
     recibos = recibos[[
         'N° OS', 'DATA PGTO', 'VALOR TOTAL', 'VALOR MÃO DE OBRA',
-        'VALOR PEÇAS', 'DESCONTO', 'VALOR PAGO', 'CARTÃO', 'DINHEIRO',
+        'VALOR PEÇAS', 'DESCONTO', 'VALOR PAGO', 'DEVEDOR', 'CARTÃO', 'DINHEIRO',
         'PIX', 'TROCO', 'VEÍCULO (PLACA)', 'CÓDIGO CLIENTE', 'DATA ENCERRAMENTO'
     ]]
 
