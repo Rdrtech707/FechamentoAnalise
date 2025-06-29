@@ -11,6 +11,8 @@ from datetime import datetime
 from typing import List, Dict, Optional
 from dataclasses import dataclass
 import re
+import tkinter as tk
+from tkinter import filedialog, messagebox
 from modules.auditor import DataAuditor, AuditError
 from config import OUTPUT_DIR
 from style_config import (
@@ -62,6 +64,110 @@ def setup_logging():
         format='%(asctime)s - %(levelname)s - %(message)s'
     )
     return logging.getLogger(__name__)
+
+
+def select_files_gui():
+    """Interface gráfica para seleção de arquivos"""
+    # Cria janela principal (oculta)
+    root = tk.Tk()
+    root.withdraw()  # Esconde a janela principal
+    
+    files = {}
+    
+    try:
+        # Seleciona arquivo CSV do cartão
+        messagebox.showinfo("Seleção de Arquivos", 
+                          "Selecione o arquivo CSV de transações do cartão")
+        cartao_csv = filedialog.askopenfilename(
+            title="Selecione o arquivo CSV do cartão",
+            filetypes=[("CSV files", "*.csv"), ("All files", "*.*")]
+        )
+        
+        if not cartao_csv:
+            messagebox.showerror("Erro", "Nenhum arquivo CSV do cartão selecionado!")
+            return None
+        
+        files['cartao_csv'] = cartao_csv
+        
+        # Seleciona arquivo CSV do banco
+        messagebox.showinfo("Seleção de Arquivos", 
+                          "Selecione o arquivo CSV de transações PIX do banco")
+        banco_csv = filedialog.askopenfilename(
+            title="Selecione o arquivo CSV do banco",
+            filetypes=[("CSV files", "*.csv"), ("All files", "*.*")]
+        )
+        
+        if not banco_csv:
+            messagebox.showerror("Erro", "Nenhum arquivo CSV do banco selecionado!")
+            return None
+        
+        files['banco_csv'] = banco_csv
+        
+        # Seleciona arquivo Excel de recebimentos
+        messagebox.showinfo("Seleção de Arquivos", 
+                          "Selecione o arquivo Excel de recebimentos")
+        recebimentos_excel = filedialog.askopenfilename(
+            title="Selecione o arquivo Excel de recebimentos",
+            filetypes=[("Excel files", "*.xlsx"), ("Excel files", "*.xls"), ("All files", "*.*")]
+        )
+        
+        if not recebimentos_excel:
+            messagebox.showerror("Erro", "Nenhum arquivo Excel de recebimentos selecionado!")
+            return None
+        
+        files['recebimentos_excel'] = recebimentos_excel
+        
+        # Confirma seleção
+        confirm_msg = f"""
+Arquivos selecionados:
+
+📄 Cartão: {os.path.basename(cartao_csv)}
+🏦 Banco: {os.path.basename(banco_csv)}
+📊 Recebimentos: {os.path.basename(recebimentos_excel)}
+
+Deseja continuar com a auditoria?
+        """
+        
+        if messagebox.askyesno("Confirmar Arquivos", confirm_msg):
+            return files
+        else:
+            messagebox.showinfo("Cancelado", "Auditoria cancelada pelo usuário")
+            return None
+            
+    except Exception as e:
+        messagebox.showerror("Erro", f"Erro ao selecionar arquivos: {e}")
+        return None
+    finally:
+        root.destroy()
+
+
+def select_files_powershell():
+    """Seleção de arquivos via PowerShell (fallback)"""
+    logger = logging.getLogger(__name__)
+    
+    print("\n=== SELEÇÃO DE ARQUIVOS ===")
+    print("Digite os caminhos dos arquivos ou pressione Enter para usar os padrões:")
+    
+    # Arquivo CSV do cartão
+    cartao_csv = input(f"CSV do cartão (padrão: data/extratos/report_20250628_194465.csv): ").strip()
+    if not cartao_csv:
+        cartao_csv = "data/extratos/report_20250628_194465.csv"
+    
+    # Arquivo CSV do banco
+    banco_csv = input(f"CSV do banco (padrão: data/extratos/NU_636868111_01JUN2025_27JUN2025.csv): ").strip()
+    if not banco_csv:
+        banco_csv = "data/extratos/NU_636868111_01JUN2025_27JUN2025.csv"
+    
+    # Arquivo Excel de recebimentos
+    recebimentos_excel = input(f"Excel de recebimentos (padrão: data/recebimentos/Recebimentos_2025-06.xlsx): ").strip()
+    if not recebimentos_excel:
+        recebimentos_excel = "data/recebimentos/Recebimentos_2025-06.xlsx"
+    
+    return {
+        'cartao_csv': cartao_csv,
+        'banco_csv': banco_csv,
+        'recebimentos_excel': recebimentos_excel
+    }
 
 
 def parse_cartao_csv(csv_file_path: str) -> pd.DataFrame:
@@ -875,6 +981,95 @@ def apply_worksheet_formatting(worksheet, df, theme, border_config):
     optimize_column_widths(worksheet, df)
 
 
+def executar_auditoria(cartao_csv: str, banco_csv: str, recebimentos_excel: str, output_file: str = None):
+    """
+    Executa a auditoria unificada com os arquivos especificados
+    
+    Args:
+        cartao_csv: Caminho para o arquivo CSV de transações de cartão
+        banco_csv: Caminho para o arquivo CSV de transações PIX do banco
+        recebimentos_excel: Caminho para o arquivo Excel de recebimentos
+        output_file: Caminho para o arquivo de saída (opcional)
+    """
+    logger = setup_logging()
+    
+    try:
+        logger.info("=== AUDITORIA UNIFICADA COMPLETA ===")
+        
+        # Define arquivo de saída padrão se não especificado
+        if not output_file:
+            output_file = "data/relatorios/auditoria_unificada_completa.xlsx"
+        
+        # Verifica se os arquivos existem
+        if not os.path.exists(cartao_csv):
+            raise FileNotFoundError(f"Arquivo CSV do cartão não encontrado: {cartao_csv}")
+        
+        if not os.path.exists(banco_csv):
+            raise FileNotFoundError(f"Arquivo CSV do banco não encontrado: {banco_csv}")
+        
+        if not os.path.exists(recebimentos_excel):
+            raise FileNotFoundError(f"Arquivo Excel de recebimentos não encontrado: {recebimentos_excel}")
+        
+        logger.info("Carregando dados...")
+        logger.info(f"📄 Cartão: {os.path.basename(cartao_csv)}")
+        logger.info(f"🏦 Banco: {os.path.basename(banco_csv)}")
+        logger.info(f"📊 Recebimentos: {os.path.basename(recebimentos_excel)}")
+        
+        # Carrega dados de cartão
+        cartao_df = parse_cartao_csv(cartao_csv)
+        
+        # Carrega dados gerados
+        auditor = DataAuditor(tolerance_percentage=0.01)
+        generated_df = auditor.load_generated_data(recebimentos_excel)
+        generated_df = auditor.normalize_column_names(generated_df)
+        
+        # Converte DATA PGTO para date se necessário
+        if 'DATA PGTO' in generated_df.columns:
+            generated_df['DATA PGTO'] = pd.to_datetime(generated_df['DATA PGTO']).dt.date
+        
+        # Carrega dados PIX
+        banco_transactions = load_banco_pix_csv(banco_csv)
+        recebimentos_transactions = load_recebimentos_excel(recebimentos_excel)
+        
+        logger.info("Executando auditorias...")
+        
+        # Executa auditoria de cartão
+        cartao_results = audit_cartao_transactions(cartao_df, generated_df)
+        
+        # Calcula estatísticas do cartão
+        cartao_stats = {
+            'total_transacoes': len(cartao_df),
+            'cartao_encontradas': len([r for r in cartao_results if r['tipo_pagamento'] == 'CARTÃO' and r['status'] == 'COINCIDENTE']),
+            'pix_encontradas': len([r for r in cartao_results if r['tipo_pagamento'] == 'PIX' and r['status'] == 'COINCIDENTE']),
+            'nao_encontradas': len([r for r in cartao_results if r['status'] in ['NÃO ENCONTRADA', 'VALOR NÃO ENCONTRADO']]),
+            'valores_coincidentes': len([r for r in cartao_results if r['status'] == 'COINCIDENTE']),
+            'valores_divergentes': len([r for r in cartao_results if r['status'] == 'DIVERGENTE'])
+        }
+        
+        # Executa auditoria PIX
+        pix_results = audit_pix_transactions(banco_transactions, recebimentos_transactions)
+        
+        logger.info("Gerando relatório unificado...")
+        
+        # Gera relatório unificado
+        generate_unified_report(cartao_results, pix_results, cartao_stats, recebimentos_transactions, banco_transactions, output_file)
+        
+        logger.info(f"✅ Auditoria unificada concluída!")
+        logger.info(f"📊 Relatório salvo em: {output_file}")
+        
+        # Exibe resumo no console
+        logger.info("\n=== RESUMO EXECUTIVO ===")
+        logger.info(f"Cartão - Total: {cartao_stats['total_transacoes']}, Coincidentes: {cartao_stats['valores_coincidentes']}")
+        logger.info(f"PIX - Banco: {len(banco_transactions)}, Recebimentos: {len(recebimentos_transactions)}")
+        logger.info(f"PIX - Correspondências: {len([r for r in pix_results if r['status'] == 'CORRESPONDÊNCIA ENCONTRADA'])}")
+        
+        return output_file
+        
+    except Exception as e:
+        logger.error(f"❌ Erro na auditoria: {e}")
+        raise
+
+
 def main():
     """Função principal"""
     logger = setup_logging()
@@ -882,10 +1077,26 @@ def main():
     try:
         logger.info("=== AUDITORIA UNIFICADA COMPLETA ===")
         
-        # Configurações
-        cartao_csv = "data/extratos/report_20250628_194465.csv"
-        banco_csv = "data/extratos/NU_636868111_01JUN2025_27JUN2025.csv"
-        recebimentos_excel = "data/recebimentos/Recebimentos_2025-06.xlsx"
+        # Pergunta sobre o método de seleção de arquivos
+        print("\n=== MÉTODO DE SELEÇÃO DE ARQUIVOS ===")
+        print("1. Interface gráfica (recomendado)")
+        print("2. PowerShell (linha de comando)")
+        
+        choice = input("\nEscolha o método (1 ou 2): ").strip()
+        
+        if choice == "1":
+            files = select_files_gui()
+        else:
+            files = select_files_powershell()
+        
+        if not files:
+            logger.info("Seleção de arquivos cancelada")
+            return
+        
+        # Extrai caminhos dos arquivos
+        cartao_csv = files['cartao_csv']
+        banco_csv = files['banco_csv']
+        recebimentos_excel = files['recebimentos_excel']
         report_file = "data/relatorios/auditoria_unificada_completa.xlsx"
         
         # Verifica se os arquivos existem
@@ -902,6 +1113,9 @@ def main():
             return
         
         logger.info("Carregando dados...")
+        logger.info(f"📄 Cartão: {os.path.basename(cartao_csv)}")
+        logger.info(f"🏦 Banco: {os.path.basename(banco_csv)}")
+        logger.info(f"📊 Recebimentos: {os.path.basename(recebimentos_excel)}")
         
         # Carrega dados de cartão
         cartao_df = parse_cartao_csv(cartao_csv)
@@ -951,8 +1165,27 @@ def main():
         logger.info(f"PIX - Banco: {len(banco_transactions)}, Recebimentos: {len(recebimentos_transactions)}")
         logger.info(f"PIX - Correspondências: {len([r for r in pix_results if r['status'] == 'CORRESPONDÊNCIA ENCONTRADA'])}")
         
+        # Mostra mensagem de sucesso na interface gráfica se disponível
+        try:
+            root = tk.Tk()
+            root.withdraw()
+            messagebox.showinfo("Sucesso", f"Auditoria concluída com sucesso!\n\nRelatório salvo em:\n{report_file}")
+            root.destroy()
+        except:
+            pass
+        
     except Exception as e:
         logger.error(f"❌ Erro na auditoria: {e}")
+        
+        # Mostra erro na interface gráfica se disponível
+        try:
+            root = tk.Tk()
+            root.withdraw()
+            messagebox.showerror("Erro", f"Erro na auditoria:\n{e}")
+            root.destroy()
+        except:
+            pass
+        
         raise
 
 
