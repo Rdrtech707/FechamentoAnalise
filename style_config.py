@@ -48,6 +48,7 @@ COLUMN_WIDTHS = {
     'diferenca': 15,
     'dif_percentual': 15,
     'status': 20,
+    'os_correspondente': 15,
     'observacao': 50,
     
     # Colunas da auditoria PIX
@@ -57,6 +58,15 @@ COLUMN_WIDTHS = {
     'data_recebimentos': 15,
     'valor_recebimentos': 15,
     'os_recebimentos': 15,
+    
+    # Novas colunas da auditoria PIX com agrupamento
+    'remetente_banco': 30,
+    'qtd_transacoes_banco': 20,
+    'detalhes_banco': 80,
+    'qtd_transacoes_recebimentos': 25,
+    'detalhes_recebimentos': 80,
+    'tipo_agrupamento': 20,
+    'status_correspondencia': 25,
     
     # Colunas do resumo
     'Métrica': 35,

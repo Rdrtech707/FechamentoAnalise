@@ -28,6 +28,20 @@ class PixTransaction:
     origem: str  # 'banco', 'cartao', 'recebimentos'
     identificador: Optional[str] = None
     referencia: Optional[str] = None
+    remetente: Optional[str] = None  # Nome ou CPF do remetente
+    chave_pix: Optional[str] = None  # Chave PIX do remetente
+
+
+@dataclass
+class GroupedPixTransaction:
+    """Representa transações PIX agrupadas por remetente e data"""
+    data: str
+    valor_total: float
+    remetente: str
+    origem: str
+    transacoes_originais: List[PixTransaction]
+    quantidade_transacoes: int
+    referencia: Optional[str] = None
 
 
 @dataclass
@@ -86,7 +100,7 @@ def parse_cartao_csv(csv_file_path: str) -> pd.DataFrame:
 
 
 def load_banco_pix_csv(csv_path: str) -> List[PixTransaction]:
-    """Carrega transações PIX do CSV do banco"""
+    """Carrega transações PIX do CSV do banco, ignorando 707 MOTORSPORT LTDA"""
     logger = logging.getLogger(__name__)
     logger.info(f"Carregando CSV do banco: {csv_path}")
     
@@ -97,31 +111,99 @@ def load_banco_pix_csv(csv_path: str) -> List[PixTransaction]:
         for _, row in df.iterrows():
             descricao = str(row['Descrição']).strip()
             
-            # Filtra apenas transferências recebidas pelo PIX
-            if 'Transferência recebida' in descricao and 'Pix' in descricao:
+            # Filtra transferências recebidas pelo PIX ou Transferência Recebida
+            if (('Transferência recebida' in descricao and 'Pix' in descricao) or 
+                'Transferência Recebida' in descricao):
                 try:
                     valor = float(str(row['Valor']).replace(',', '.'))
                     data = str(row['Data']).strip()
+                    
+                    # Extrai informações do remetente da descrição
+                    remetente = extract_remetente_from_description(descricao)
+                    if remetente and remetente.strip().upper() == '707 MOTORSPORT LTDA':
+                        continue  # Ignora esse remetente
+                    chave_pix = extract_chave_pix_from_description(descricao)
                     
                     transaction = PixTransaction(
                         data=data,
                         valor=valor,
                         descricao=descricao,
                         origem='banco',
-                        identificador=str(row['Identificador']).strip()
+                        identificador=None,  # Não usa o identificador do banco
+                        remetente=remetente,
+                        chave_pix=chave_pix
                     )
                     transactions.append(transaction)
                     
                 except (ValueError, KeyError) as e:
                     logger.warning(f"Erro ao processar linha do banco: {e}")
                     continue
-        
-        logger.info(f"Carregadas {len(transactions)} transações PIX do banco")
+        logger.info(f"Carregadas {len(transactions)} transações PIX do banco (ignorando 707 MOTORSPORT LTDA)")
         return transactions
         
     except Exception as e:
         logger.error(f"Erro ao carregar CSV do banco: {e}")
         return []
+
+
+def extract_remetente_from_description(descricao: str) -> Optional[str]:
+    """Extrai o nome do remetente da descrição da transação PIX"""
+    try:
+        # Padrões específicos baseados no formato real do CSV
+        patterns = [
+            # Padrão: "Transferência recebida pelo Pix - NOME - CPF/CNPJ - BANCO"
+            r'Transferência recebida pelo Pix\s*-\s*([^-]+?)\s*-\s*[•\d\./-]+\s*-',
+            # Padrão: "Transferência Recebida - NOME - CPF/CNPJ - BANCO"
+            r'Transferência Recebida\s*-\s*([^-]+?)\s*-\s*[•\d\./-]+\s*-',
+        ]
+        
+        for pattern in patterns:
+            match = re.search(pattern, descricao, re.IGNORECASE)
+            if match:
+                remetente = match.group(1).strip()
+                # Remove caracteres especiais e normaliza
+                remetente = re.sub(r'[^\w\s]', '', remetente).strip()
+                # Remove espaços extras
+                remetente = re.sub(r'\s+', ' ', remetente)
+                if len(remetente) > 2:  # Nome deve ter pelo menos 3 caracteres
+                    return remetente
+        
+        # Se não encontrou com os padrões específicos, tenta extrair o nome antes do primeiro CPF/CNPJ
+        if '•••' in descricao or re.search(r'\d{3}\.\d{3}\.\d{3}', descricao):
+            # Procura por texto antes do CPF/CNPJ
+            parts = descricao.split(' - ')
+            if len(parts) >= 2:
+                # Pega a segunda parte (após "Transferência recebida pelo Pix")
+                nome_part = parts[1]
+                # Remove o CPF/CNPJ se presente
+                nome_clean = re.sub(r'[•\d\./-]+', '', nome_part).strip()
+                if len(nome_clean) > 2:
+                    return nome_clean
+        
+        return None
+    except:
+        return None
+
+
+def extract_chave_pix_from_description(descricao: str) -> Optional[str]:
+    """Extrai a chave PIX da descrição da transação"""
+    try:
+        # Padrões para CPF, CNPJ, email, telefone
+        patterns = [
+            r'(\d{3}\.\d{3}\.\d{3}-\d{2})',  # CPF
+            r'(\d{2}\.\d{3}\.\d{3}/\d{4}-\d{2})',  # CNPJ
+            r'([a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,})',  # Email
+            r'(\+55\s?\d{2}\s?\d{4,5}\s?\d{4})',  # Telefone
+        ]
+        
+        for pattern in patterns:
+            match = re.search(pattern, descricao)
+            if match:
+                return match.group(1)
+        
+        return None
+    except:
+        return None
 
 
 def load_recebimentos_excel(excel_path: str) -> List[PixTransaction]:
@@ -184,6 +266,7 @@ def audit_cartao_transactions(cartao_df: pd.DataFrame, generated_df: pd.DataFram
                 'status': 'NÃO ENCONTRADA',
                 'valor_gerado': None,
                 'diferenca': None,
+                'os_correspondente': None,
                 'observacao': f'Data {data_cartao} não encontrada nos dados gerados'
             })
             continue
@@ -191,12 +274,14 @@ def audit_cartao_transactions(cartao_df: pd.DataFrame, generated_df: pd.DataFram
         # Procura por valor na coluna correspondente
         campo_procurado = 'CARTÃO' if tipo_pagamento == 'CARTÃO' else 'PIX'
         valor_encontrado = None
+        os_correspondente = None
         
         for _, gen_row in matching_generated.iterrows():
             if campo_procurado in gen_row.index:
                 valor_gen = gen_row[campo_procurado]
                 if pd.notna(valor_gen) and abs(valor_gen - valor_cartao) <= (valor_cartao * 0.01):  # 1% tolerância
                     valor_encontrado = valor_gen
+                    os_correspondente = gen_row.get('N° OS', 'N/A')
                     break
         
         if valor_encontrado is not None:
@@ -212,6 +297,7 @@ def audit_cartao_transactions(cartao_df: pd.DataFrame, generated_df: pd.DataFram
                 'status': 'COINCIDENTE' if is_match else 'DIVERGENTE',
                 'valor_gerado': valor_encontrado,
                 'diferenca': diferenca,
+                'os_correspondente': os_correspondente,
                 'observacao': f'Encontrado na coluna {campo_procurado}'
             })
         else:
@@ -224,6 +310,7 @@ def audit_cartao_transactions(cartao_df: pd.DataFrame, generated_df: pd.DataFram
                 'status': 'VALOR NÃO ENCONTRADO',
                 'valor_gerado': None,
                 'diferenca': None,
+                'os_correspondente': None,
                 'observacao': f'Valor {valor_cartao} não encontrado na coluna {campo_procurado} para a data {data_cartao}'
             })
     
@@ -232,46 +319,185 @@ def audit_cartao_transactions(cartao_df: pd.DataFrame, generated_df: pd.DataFram
 
 def audit_pix_transactions(banco_transactions: List[PixTransaction], 
                           recebimentos_transactions: List[PixTransaction]) -> List[Dict]:
-    """Executa auditoria de transações PIX"""
+    """Executa auditoria de transações PIX com agrupamento por remetente"""
+    logger = logging.getLogger(__name__)
+    
+    # Agrupa transações do banco por remetente e data
+    logger.info("Agrupando transações PIX do banco por remetente...")
+    banco_grouped = group_pix_transactions_by_remetente(banco_transactions)
+    
+    # Agrupa transações dos recebimentos por data (não há remetente)
+    logger.info("Agrupando transações PIX dos recebimentos por data...")
+    recebimentos_grouped = group_recebimentos_by_date(recebimentos_transactions)
+    
     results = []
     
-    for banco_tx in banco_transactions:
-        # Procura correspondência nos recebimentos
+    for banco_group in banco_grouped:
+        # Procura correspondência nos recebimentos agrupados
         encontrado = False
-        for rec_tx in recebimentos_transactions:
-            # Compara por valor (com tolerância de 1%)
-            if abs(banco_tx.valor - rec_tx.valor) <= (banco_tx.valor * 0.01):
+        
+        for rec_group in recebimentos_grouped:
+            # Compara por valor total (com tolerância de 1%)
+            if abs(banco_group.valor_total - rec_group.valor_total) <= (banco_group.valor_total * 0.01):
                 encontrado = True
+                
+                # Cria detalhes das transações individuais
+                detalhes_banco = []
+                for tx in banco_group.transacoes_originais:
+                    detalhes_banco.append(f"R$ {tx.valor:,.2f} - {tx.remetente or 'N/A'}")
+                
+                detalhes_recebimentos = []
+                for tx in rec_group.transacoes_originais:
+                    detalhes_recebimentos.append(f"R$ {tx.valor:,.2f} - OS: {tx.referencia}")
+                
                 results.append({
-                    'data_banco': banco_tx.data,
-                    'valor_banco': banco_tx.valor,
-                    'descricao_banco': banco_tx.descricao,
-                    'data_recebimentos': rec_tx.data,
-                    'valor_recebimentos': rec_tx.valor,
-                    'os_recebimentos': rec_tx.referencia,
+                    'data_banco': banco_group.data,
+                    'valor_banco': banco_group.valor_total,
+                    'remetente_banco': banco_group.remetente,
+                    'qtd_transacoes_banco': banco_group.quantidade_transacoes,
+                    'detalhes_banco': ' | '.join(detalhes_banco),
+                    'data_recebimentos': rec_group.data,
+                    'valor_recebimentos': rec_group.valor_total,
+                    'qtd_transacoes_recebimentos': rec_group.quantidade_transacoes,
+                    'detalhes_recebimentos': ' | '.join(detalhes_recebimentos),
                     'status': 'CORRESPONDÊNCIA ENCONTRADA',
-                    'observacao': f'Valor R$ {banco_tx.valor:,.2f} encontrado nos recebimentos (OS: {rec_tx.referencia})'
+                    'tipo_agrupamento': 'Múltiplas transações' if banco_group.quantidade_transacoes > 1 else 'Transação única',
+                    'observacao': f'Valor total R$ {banco_group.valor_total:,.2f} corresponde ao total dos recebimentos'
                 })
                 break
         
         if not encontrado:
+            # Cria detalhes das transações individuais
+            detalhes_banco = []
+            for tx in banco_group.transacoes_originais:
+                detalhes_banco.append(f"R$ {tx.valor:,.2f} - {tx.remetente or 'N/A'}")
+            
             results.append({
-                'data_banco': banco_tx.data,
-                'valor_banco': banco_tx.valor,
-                'descricao_banco': banco_tx.descricao,
+                'data_banco': banco_group.data,
+                'valor_banco': banco_group.valor_total,
+                'remetente_banco': banco_group.remetente,
+                'qtd_transacoes_banco': banco_group.quantidade_transacoes,
+                'detalhes_banco': ' | '.join(detalhes_banco),
                 'data_recebimentos': None,
                 'valor_recebimentos': None,
-                'os_recebimentos': None,
+                'qtd_transacoes_recebimentos': None,
+                'detalhes_recebimentos': None,
                 'status': 'SEM CORRESPONDÊNCIA',
-                'observacao': 'Transação do banco sem correspondência nos recebimentos'
+                'tipo_agrupamento': 'Múltiplas transações' if banco_group.quantidade_transacoes > 1 else 'Transação única',
+                'observacao': f'Transações de {banco_group.remetente} sem correspondência nos recebimentos'
             })
     
     return results
 
 
+def group_pix_transactions_by_remetente(transactions: List[PixTransaction]) -> List[GroupedPixTransaction]:
+    """Agrupa transações PIX da mesma pessoa no mesmo dia"""
+    logger = logging.getLogger(__name__)
+    
+    # Agrupa por data (simplificado)
+    grouped_dict = {}
+    
+    for tx in transactions:
+        # Cria chave de agrupamento: apenas data
+        group_key = tx.data
+        
+        if group_key not in grouped_dict:
+            grouped_dict[group_key] = []
+        grouped_dict[group_key].append(tx)
+    
+    # Cria transações agrupadas
+    grouped_transactions = []
+    
+    for data, transacoes in grouped_dict.items():
+        if len(transacoes) == 1:
+            # Transação única - mantém como está
+            tx = transacoes[0]
+            grouped_tx = GroupedPixTransaction(
+                data=data,
+                valor_total=tx.valor,
+                remetente=tx.remetente or "Desconhecido",
+                origem=tx.origem,
+                transacoes_originais=transacoes,
+                quantidade_transacoes=1,
+                referencia=tx.referencia
+            )
+        else:
+            # Múltiplas transações no mesmo dia - agrupa
+            valor_total = sum(tx.valor for tx in transacoes)
+            # Tenta identificar um remetente comum ou usa "Múltiplos"
+            remetentes = [tx.remetente for tx in transacoes if tx.remetente]
+            if len(set(remetentes)) == 1 and remetentes[0]:
+                remetente = remetentes[0]
+            else:
+                remetente = "Múltiplos remetentes"
+            
+            grouped_tx = GroupedPixTransaction(
+                data=data,
+                valor_total=valor_total,
+                remetente=remetente,
+                origem=transacoes[0].origem,
+                transacoes_originais=transacoes,
+                quantidade_transacoes=len(transacoes),
+                referencia="Múltiplas transações"
+            )
+            logger.info(f"Agrupadas {len(transacoes)} transações em {data} - Total: R$ {valor_total:,.2f}")
+        
+        grouped_transactions.append(grouped_tx)
+    
+    logger.info(f"Transações agrupadas: {len(transactions)} -> {len(grouped_transactions)} grupos")
+    return grouped_transactions
+
+
+def group_recebimentos_by_date(transactions: List[PixTransaction]) -> List[GroupedPixTransaction]:
+    """Agrupa transações de recebimentos por data"""
+    logger = logging.getLogger(__name__)
+    
+    # Agrupa por data
+    grouped_dict = {}
+    
+    for tx in transactions:
+        if tx.data not in grouped_dict:
+            grouped_dict[tx.data] = []
+        grouped_dict[tx.data].append(tx)
+    
+    # Cria transações agrupadas
+    grouped_transactions = []
+    
+    for data, transacoes in grouped_dict.items():
+        if len(transacoes) == 1:
+            # Transação única
+            tx = transacoes[0]
+            grouped_tx = GroupedPixTransaction(
+                data=data,
+                valor_total=tx.valor,
+                remetente="Recebimento",
+                origem=tx.origem,
+                transacoes_originais=transacoes,
+                quantidade_transacoes=1,
+                referencia=tx.referencia
+            )
+        else:
+            # Múltiplas transações na mesma data
+            valor_total = sum(tx.valor for tx in transacoes)
+            grouped_tx = GroupedPixTransaction(
+                data=data,
+                valor_total=valor_total,
+                remetente="Recebimentos múltiplos",
+                origem=transacoes[0].origem,
+                transacoes_originais=transacoes,
+                quantidade_transacoes=len(transacoes),
+                referencia="Múltiplas OS"
+            )
+            logger.info(f"Agrupados {len(transacoes)} recebimentos em {data} - Total: R$ {valor_total:,.2f}")
+        
+        grouped_transactions.append(grouped_tx)
+    
+    return grouped_transactions
+
+
 def generate_unified_report(cartao_results: List[Dict], pix_results: List[Dict], 
                            cartao_stats: Dict, recebimentos_transactions: List[PixTransaction],
-                           output_file: str):
+                           banco_transactions: List[PixTransaction], output_file: str):
     """Gera relatório Excel unificado com formatação otimizada"""
     try:
         # Garante que a pasta existe
@@ -284,7 +510,157 @@ def generate_unified_report(cartao_results: List[Dict], pix_results: List[Dict],
             theme = THEMES['default']
             border_config = BORDER_CONFIGS['default']
             
-            # Resumo Geral
+            # Auditoria de Cartão - Detalhes
+            if cartao_results:
+                cartao_df = pd.DataFrame(cartao_results)
+                # Calcula diferença percentual apenas para linhas com diferença
+                cartao_df['dif_percentual'] = cartao_df.apply(
+                    lambda row: (row['diferenca'] / row['valor_cartao'] * 100) if row['diferenca'] is not None and row['valor_cartao'] and row['valor_cartao'] > 0 else None, axis=1)
+                
+                # Define colunas para exibição
+                colunas_cartao = [
+                    'identificador', 'data_cartao', 'tipo_pagamento', 'valor_cartao', 'valor_gerado',
+                    'diferenca', 'dif_percentual', 'status', 'os_correspondente', 'observacao'
+                ]
+                cartao_df = cartao_df[[c for c in colunas_cartao if c in cartao_df.columns]]
+                
+                if not cartao_df.empty:
+                    safe_to_excel(cartao_df, writer, 'Cartão - Detalhes', theme, border_config)
+                else:
+                    empty_df = pd.DataFrame({'Mensagem': ['Nenhuma transação de cartão encontrada']})
+                    safe_to_excel(empty_df, writer, 'Cartão - Detalhes', theme, border_config)
+                
+                # Divergências de Cartão
+                divergencias_cartao = [r for r in cartao_results if r['status'] in ['DIVERGENTE', 'NÃO ENCONTRADA', 'VALOR NÃO ENCONTRADO']]
+                if divergencias_cartao:
+                    divergencias_df = pd.DataFrame(divergencias_cartao)
+                    divergencias_df['dif_percentual'] = divergencias_df.apply(
+                        lambda row: (row['diferenca'] / row['valor_cartao'] * 100) if row['diferenca'] is not None and row['valor_cartao'] and row['valor_cartao'] > 0 else None, axis=1)
+                    divergencias_df = divergencias_df[[c for c in colunas_cartao if c in divergencias_df.columns]]
+                    safe_to_excel(divergencias_df, writer, 'Cartão - Divergências', theme, border_config)
+                else:
+                    empty_df = pd.DataFrame({'Mensagem': ['Nenhuma divergência encontrada']})
+                    safe_to_excel(empty_df, writer, 'Cartão - Divergências', theme, border_config)
+            else:
+                empty_df = pd.DataFrame({'Mensagem': ['Nenhuma transação de cartão encontrada']})
+                safe_to_excel(empty_df, writer, 'Cartão - Detalhes', theme, border_config)
+
+            # Auditoria PIX - Detalhes (NÃO agrupado)
+            # Carrega novamente as transações PIX do banco para garantir granularidade
+            banco_pix_csv = "data/extratos/NU_636868111_01JUN2025_27JUN2025.csv"
+            banco_pix_df = pd.read_csv(banco_pix_csv, encoding='utf-8')
+            # Filtra apenas recebidas pelo Pix ou Transferência Recebida
+            pix_banco_df = banco_pix_df[
+                (banco_pix_df['Descrição'].str.contains('Transferência recebida', na=False) & 
+                 banco_pix_df['Descrição'].str.contains('Pix', na=False)) |
+                banco_pix_df['Descrição'].str.contains('Transferência Recebida', na=False)
+            ]
+            # Ajusta colunas para exibir principais informações
+            pix_banco_df = pix_banco_df.rename(columns={
+                'Data': 'data',
+                'Valor': 'valor',
+                'Descrição': 'descricao',
+            })
+            # Extrai remetente para exibição
+            pix_banco_df['remetente'] = pix_banco_df['descricao'].apply(extract_remetente_from_description)
+            # Remove 707 MOTORSPORT LTDA
+            pix_banco_df = pix_banco_df[~(pix_banco_df['remetente'].str.strip().str.upper() == '707 MOTORSPORT LTDA')]
+            
+            # Adiciona coluna OS correspondente baseada nos resultados da auditoria
+            pix_banco_df['os_correspondente'] = None
+            pix_banco_df['status_correspondencia'] = 'SEM CORRESPONDÊNCIA'
+            
+            # Carrega os dados de recebimentos para comparação individual
+            recebimentos_df = pd.read_excel("data/recebimentos/Recebimentos_2025-06.xlsx")
+            
+            # Normaliza as datas para comparação
+            recebimentos_df['DATA_PGTO_NORM'] = pd.to_datetime(recebimentos_df['DATA PGTO']).dt.strftime('%d/%m/%Y')
+            
+            # Primeiro, tenta correspondência individual (transação por transação)
+            for idx, row in pix_banco_df.iterrows():
+                # Procura correspondência por data e valor com tolerância
+                matching_recebimentos = recebimentos_df[
+                    (recebimentos_df['DATA_PGTO_NORM'] == row['data']) & 
+                    (recebimentos_df['PIX'] > 0) &  # Garante que tem valor PIX
+                    (abs(recebimentos_df['PIX'] - row['valor']) <= (row['valor'] * 0.01))  # 1% tolerância
+                ]
+                
+                if not matching_recebimentos.empty:
+                    # Encontrou correspondência individual
+                    os_numero = matching_recebimentos.iloc[0]['N° OS']
+                    pix_banco_df.at[idx, 'os_correspondente'] = str(os_numero)
+                    pix_banco_df.at[idx, 'status_correspondencia'] = 'CORRESPONDÊNCIA ENCONTRADA'
+            
+            # Segundo, procura por correspondências múltiplas (múltiplas transações para uma OS)
+            # Agrupa transações do banco por data
+            transacoes_por_data = {}
+            for idx, row in pix_banco_df.iterrows():
+                if row['status_correspondencia'] == 'SEM CORRESPONDÊNCIA':  # Só processa as não encontradas
+                    data = row['data']
+                    if data not in transacoes_por_data:
+                        transacoes_por_data[data] = []
+                    transacoes_por_data[data].append({
+                        'idx': idx,
+                        'valor': row['valor'],
+                        'remetente': row['remetente']
+                    })
+            
+            # Para cada data com múltiplas transações não encontradas, procura correspondência por valor total
+            for data, transacoes in transacoes_por_data.items():
+                if len(transacoes) > 1:  # Só processa se há múltiplas transações
+                    valor_total = sum(tx['valor'] for tx in transacoes)
+                    
+                    # Procura recebimentos com valor total correspondente na mesma data
+                    matching_recebimentos = recebimentos_df[
+                        (recebimentos_df['DATA_PGTO_NORM'] == data) & 
+                        (recebimentos_df['PIX'] > 0) &  # Garante que tem valor PIX
+                        (abs(recebimentos_df['PIX'] - valor_total) <= (valor_total * 0.01))  # 1% tolerância
+                    ]
+                    
+                    if not matching_recebimentos.empty:
+                        # Encontrou correspondência múltipla
+                        os_numero = matching_recebimentos.iloc[0]['N° OS']
+                        
+                        # Marca todas as transações com a mesma OS
+                        for tx in transacoes:
+                            pix_banco_df.at[tx['idx'], 'os_correspondente'] = str(os_numero)
+                            pix_banco_df.at[tx['idx'], 'status_correspondencia'] = 'CORRESPONDÊNCIA MÚLTIPLA'
+            
+            # Terceiro, para transações individuais não encontradas, tenta correspondência por valor total
+            # (caso de uma transação que corresponde ao valor total de uma OS)
+            for idx, row in pix_banco_df.iterrows():
+                if row['status_correspondencia'] == 'SEM CORRESPONDÊNCIA':
+                    # Procura recebimentos com valor total correspondente na mesma data
+                    matching_recebimentos = recebimentos_df[
+                        (recebimentos_df['DATA_PGTO_NORM'] == row['data']) & 
+                        (recebimentos_df['PIX'] > 0) &  # Garante que tem valor PIX
+                        (abs(recebimentos_df['PIX'] - row['valor']) <= (row['valor'] * 0.01))  # 1% tolerância
+                    ]
+                    
+                    if not matching_recebimentos.empty:
+                        # Encontrou correspondência por valor total
+                        os_numero = matching_recebimentos.iloc[0]['N° OS']
+                        pix_banco_df.at[idx, 'os_correspondente'] = str(os_numero)
+                        pix_banco_df.at[idx, 'status_correspondencia'] = 'CORRESPONDÊNCIA ENCONTRADA'
+            
+            # Reordena colunas
+            cols = ['data', 'valor', 'remetente', 'os_correspondente', 'status_correspondencia', 'descricao']
+            pix_banco_df = pix_banco_df[cols]
+            safe_to_excel(pix_banco_df, writer, 'PIX - Detalhes', theme, border_config)
+
+            # PIX - Divergências (baseado na correspondência individual)
+            pix_sem_correspondencia = pix_banco_df[pix_banco_df['status_correspondencia'] == 'SEM CORRESPONDÊNCIA']
+            if not pix_sem_correspondencia.empty:
+                safe_to_excel(pix_sem_correspondencia, writer, 'PIX - Divergências', theme, border_config)
+            else:
+                empty_df = pd.DataFrame({'Mensagem': ['Nenhuma transação sem correspondência']})
+                safe_to_excel(empty_df, writer, 'PIX - Divergências', theme, border_config)
+
+            # Calcula estatísticas PIX baseadas na correspondência individual
+            correspondencias_encontradas = len(pix_banco_df[pix_banco_df['status_correspondencia'].isin(['CORRESPONDÊNCIA ENCONTRADA', 'CORRESPONDÊNCIA MÚLTIPLA'])])
+            sem_correspondencia = len(pix_banco_df[pix_banco_df['status_correspondencia'] == 'SEM CORRESPONDÊNCIA'])
+            
+            # Atualiza o resumo com as estatísticas corretas
             metricas = [
                 '=== AUDITORIA DE CARTÃO ===',
                 'Total de Transações',
@@ -315,11 +691,11 @@ def generate_unified_report(cartao_results: List[Dict], pix_results: List[Dict],
                 f"{(cartao_stats['valores_coincidentes'] / cartao_stats['total_transacoes']) * 100:.2f}%" if cartao_stats['total_transacoes'] > 0 else "0%",
                 '',
                 '',
-                len(pix_results),
-                len(recebimentos_transactions),
-                len([r for r in pix_results if r['status'] == 'CORRESPONDÊNCIA ENCONTRADA']),
-                len([r for r in pix_results if r['status'] == 'SEM CORRESPONDÊNCIA']),
-                f"{(len([r for r in pix_results if r['status'] == 'CORRESPONDÊNCIA ENCONTRADA']) / len(pix_results)) * 100:.2f}%" if pix_results else "0%",
+                len(banco_transactions),  # Total de transações PIX do banco (não agrupadas)
+                len(recebimentos_transactions),  # Total de transações PIX dos recebimentos
+                correspondencias_encontradas,  # Correspondências baseadas na correspondência individual
+                sem_correspondencia,  # Sem correspondência baseada na correspondência individual
+                f"{(correspondencias_encontradas / len(pix_banco_df)) * 100:.2f}%" if len(pix_banco_df) > 0 else "0%",
                 '',
                 datetime.now().strftime('%d/%m/%Y %H:%M:%S')
             ]
@@ -335,58 +711,6 @@ def generate_unified_report(cartao_results: List[Dict], pix_results: List[Dict],
             summary_data = {'Métrica': metricas, 'Valor': valores}
             summary_df = pd.DataFrame(summary_data)
             safe_to_excel(summary_df, writer, 'Resumo Geral', theme, border_config)
-
-            # Auditoria de Cartão - Detalhes
-            if cartao_results:
-                cartao_df = pd.DataFrame(cartao_results)
-                # Calcula diferença percentual apenas para linhas com diferença
-                cartao_df['dif_percentual'] = cartao_df.apply(
-                    lambda row: (row['diferenca'] / row['valor_cartao'] * 100) if row['diferenca'] is not None and row['valor_cartao'] and row['valor_cartao'] > 0 else None, axis=1)
-                
-                # Define colunas para exibição
-                colunas_cartao = [
-                    'identificador', 'data_cartao', 'tipo_pagamento', 'valor_cartao', 'valor_gerado',
-                    'diferenca', 'dif_percentual', 'status', 'observacao'
-                ]
-                cartao_df = cartao_df[[c for c in colunas_cartao if c in cartao_df.columns]]
-                
-                if not cartao_df.empty:
-                    safe_to_excel(cartao_df, writer, 'Cartão - Detalhes', theme, border_config)
-                else:
-                    empty_df = pd.DataFrame({'Mensagem': ['Nenhuma transação de cartão encontrada']})
-                    safe_to_excel(empty_df, writer, 'Cartão - Detalhes', theme, border_config)
-                
-                # Divergências de Cartão
-                divergencias_cartao = [r for r in cartao_results if r['status'] in ['DIVERGENTE', 'NÃO ENCONTRADA', 'VALOR NÃO ENCONTRADO']]
-                if divergencias_cartao:
-                    divergencias_df = pd.DataFrame(divergencias_cartao)
-                    divergencias_df['dif_percentual'] = divergencias_df.apply(
-                        lambda row: (row['diferenca'] / row['valor_cartao'] * 100) if row['diferenca'] is not None and row['valor_cartao'] and row['valor_cartao'] > 0 else None, axis=1)
-                    divergencias_df = divergencias_df[[c for c in colunas_cartao if c in divergencias_df.columns]]
-                    safe_to_excel(divergencias_df, writer, 'Cartão - Divergências', theme, border_config)
-                else:
-                    empty_df = pd.DataFrame({'Mensagem': ['Nenhuma divergência encontrada']})
-                    safe_to_excel(empty_df, writer, 'Cartão - Divergências', theme, border_config)
-            else:
-                empty_df = pd.DataFrame({'Mensagem': ['Nenhuma transação de cartão encontrada']})
-                safe_to_excel(empty_df, writer, 'Cartão - Detalhes', theme, border_config)
-
-            # Auditoria PIX - Detalhes
-            if pix_results:
-                pix_df = pd.DataFrame(pix_results)
-                safe_to_excel(pix_df, writer, 'PIX - Detalhes', theme, border_config)
-                
-                # PIX sem correspondência
-                pix_sem_correspondencia = [r for r in pix_results if r['status'] == 'SEM CORRESPONDÊNCIA']
-                if pix_sem_correspondencia:
-                    pix_sem_df = pd.DataFrame(pix_sem_correspondencia)
-                    safe_to_excel(pix_sem_df, writer, 'PIX - Sem Correspondência', theme, border_config)
-                else:
-                    empty_df = pd.DataFrame({'Mensagem': ['Nenhuma transação sem correspondência']})
-                    safe_to_excel(empty_df, writer, 'PIX - Sem Correspondência', theme, border_config)
-            else:
-                empty_df = pd.DataFrame({'Mensagem': ['Nenhuma transação PIX encontrada']})
-                safe_to_excel(empty_df, writer, 'PIX - Detalhes', theme, border_config)
 
     except Exception as e:
         logging.error(f"Erro ao gerar relatório: {e}")
@@ -616,7 +940,7 @@ def main():
         logger.info("Gerando relatório unificado...")
         
         # Gera relatório unificado
-        generate_unified_report(cartao_results, pix_results, cartao_stats, recebimentos_transactions, report_file)
+        generate_unified_report(cartao_results, pix_results, cartao_stats, recebimentos_transactions, banco_transactions, report_file)
         
         logger.info(f"✅ Auditoria unificada concluída!")
         logger.info(f"📊 Relatório salvo em: {report_file}")
