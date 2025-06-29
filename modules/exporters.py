@@ -1,28 +1,35 @@
 import os
 import pandas as pd
 from openpyxl.utils import get_column_letter
-from openpyxl.styles import Alignment, PatternFill
+from openpyxl.styles import Alignment, PatternFill, Font, Border, Side
+from style_config import (
+    CONTABEIS_COLS, CURRENCY_FORMATS, DATE_FORMATS, THEMES, 
+    DECIMAL_SEPARATORS, COLUMN_WIDTHS, BORDER_STYLES, BORDER_CONFIGS
+)
 
 
-def export_to_excel(dataframes_by_month: dict, output_dir: str):
+def export_to_excel(
+    dataframes_by_month: dict,
+    output_dir: str,
+    currency: str = 'BRL',
+    language: str = 'pt_BR',
+    theme: str = 'default',
+    decimal_separator: str = None,
+    border_theme: str = 'default'
+):
     """
     Salva cada DataFrame em planilhas Excel separadas por mês,
-    ajustando largura de colunas, aplicando formatação contábil e cores.
-
-    - dataframes_by_month: {"YYYY-MM": pd.DataFrame}
-    - output_dir: pasta onde salvar os arquivos
+    ajustando automaticamente a largura das colunas e formatando
+    colunas numéricas em estilo contábil com duas casas decimais.
+    Permite customizar símbolo, separador decimal, tema de cores e bordas.
     """
     os.makedirs(output_dir, exist_ok=True)
 
-    contabeis = [
-        "VALOR TOTAL", "VALOR MÃO DE OBRA", "VALOR PEÇAS",
-        "DESCONTO", "VALOR PAGO", "DEVEDOR", "CARTÃO", "DINHEIRO",
-        "PIX", "TROCO"
-    ]
-    # Definições de cores com maior contraste
-    header_fill = PatternFill(fill_type="solid", start_color="FFBFBFBF", end_color="FFBFBFBF")  # cinza médio
-    row_fill_light = PatternFill(fill_type="solid", start_color="FFFFFFFF", end_color="FFFFFFFF")  # branco
-    row_fill_dark  = PatternFill(fill_type="solid", start_color="FFE6E6E6", end_color="FFE6E6E6")  # cinza mais escuro
+    currency_format = CURRENCY_FORMATS.get(currency, 'R$ #,##0.00')
+    date_format = DATE_FORMATS.get(language, 'dd/mm/yyyy')
+    theme_cfg = THEMES.get(theme, THEMES['default'])
+    border_cfg = BORDER_CONFIGS.get(border_theme, BORDER_CONFIGS['default'])
+    decimal_sep = decimal_separator or DECIMAL_SEPARATORS.get(language, ',')
 
     for month, df in dataframes_by_month.items():
         filepath = os.path.join(output_dir, f"Recebimentos_{month}.xlsx")
@@ -31,21 +38,52 @@ def export_to_excel(dataframes_by_month: dict, output_dir: str):
             df.to_excel(writer, sheet_name=sheet_name, index=False)
             ws = writer.sheets[sheet_name]
 
-            # Ajusta largura e formata números
+            # Estilo de cabeçalho
+            header_fill = PatternFill(start_color=theme_cfg['header_bg'], end_color=theme_cfg['header_bg'], fill_type='solid')
+            header_font = Font(color=theme_cfg['header_font'], bold=True)
+
+            # Configurar bordas
+            border_color = border_cfg['border_color']
+            header_border_style = BORDER_STYLES.get(border_cfg['header_border'])
+            data_border_style = BORDER_STYLES.get(border_cfg['data_border'])
+
             for idx, col in enumerate(df.columns, start=1):
-                max_length = max(df[col].astype(str).map(len).max(), len(col)) + 7
-                ws.column_dimensions[get_column_letter(idx)].width = max_length
-                if col in contabeis:
-                    for cell in ws[get_column_letter(idx)][1:]:
-                        cell.number_format = 'R$ #,##0.00'
+                # Ajusta largura da coluna usando configuração personalizada
+                column_width = COLUMN_WIDTHS.get(col, COLUMN_WIDTHS['default'])
+                ws.column_dimensions[get_column_letter(idx)].width = column_width
+
+                # Aplica formatação contábil para colunas numéricas
+                if col in CONTABEIS_COLS:
+                    for row_idx, cell in enumerate(ws[get_column_letter(idx)][1:], start=2):
+                        cell.number_format = currency_format
                         cell.alignment = Alignment(horizontal='left')
+                        cell.fill = PatternFill(start_color=theme_cfg['contabil_bg'], end_color=theme_cfg['contabil_bg'], fill_type='solid')
+                        cell.font = Font(color=theme_cfg['contabil_font'])
+                        
+                        # Aplica bordas aos dados
+                        if data_border_style:
+                            cell.border = Border(
+                                left=Side(style=data_border_style, color=border_color),
+                                right=Side(style=data_border_style, color=border_color),
+                                top=Side(style=data_border_style, color=border_color),
+                                bottom=Side(style=data_border_style, color=border_color)
+                            )
 
-            # Pinta cabeçalho
-            for cell in ws[1]:
-                cell.fill = header_fill
+                # Aplica estilo ao cabeçalho
+                header_cell = ws[f"{get_column_letter(idx)}1"]
+                header_cell.fill = header_fill
+                header_cell.font = header_font
+                header_cell.alignment = Alignment(horizontal='center')
+                
+                # Aplica bordas ao cabeçalho
+                if header_border_style:
+                    header_cell.border = Border(
+                        left=Side(style=header_border_style, color=border_color),
+                        right=Side(style=header_border_style, color=border_color),
+                        top=Side(style=header_border_style, color=border_color),
+                        bottom=Side(style=header_border_style, color=border_color)
+                    )
 
-            # Aplica cores alternadas nas linhas de dados
-            for row_idx in range(2, ws.max_row + 1):
-                fill = row_fill_light if row_idx % 2 == 0 else row_fill_dark
-                for col_idx in range(1, ws.max_column + 1):
-                    ws.cell(row=row_idx, column=col_idx).fill = fill
+            # Ajusta separador decimal se necessário (apenas visual, não altera valores)
+            # (Excel usa o separador do sistema, mas podemos ajustar o formato se necessário)
+            # Não implementado aqui pois depende do Excel do usuário

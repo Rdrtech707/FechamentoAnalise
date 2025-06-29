@@ -181,7 +181,11 @@ def main():
                 
                 # Exporta para Excel
                 try:
-                    export_to_excel({periodo: df_periodo}, output_dir=OUTPUT_DIR)
+                    export_to_excel(
+                        {periodo: df_periodo}, 
+                        output_dir=OUTPUT_DIR,
+                        border_theme='default'  # Pode ser alterado para 'corporate', 'dark', 'minimal'
+                    )
                     logger.info(f"Arquivo Excel gerado com sucesso em {OUTPUT_DIR}")
                     print(f"✅ Arquivo gerado: {OUTPUT_DIR}/Recebimentos_{periodo}.xlsx")
                 except Exception as e:
