@@ -4,6 +4,7 @@ import os
 from openpyxl import load_workbook
 from modules.exporters import export_to_excel
 from style_config import COLUMN_WIDTHS, BORDER_CONFIGS, THEMES
+from openpyxl.utils import get_column_letter
 
 
 class TestExcelExport:
@@ -278,4 +279,25 @@ class TestExcelExport:
         
         # Limpa após o teste
         import shutil
-        shutil.rmtree(invalid_dir, ignore_errors=True) 
+        shutil.rmtree(invalid_dir, ignore_errors=True)
+
+    def test_column_widths_auto(self, sample_data, output_dir):
+        """Testa se as larguras das colunas são aplicadas corretamente"""
+        export_to_excel(sample_data, output_dir)
+        
+        file_path = os.path.join(output_dir, "Recebimentos_2024-01.xlsx")
+        wb = load_workbook(file_path)
+        ws = wb["2024-01"]
+        
+        # Verifica larguras das colunas
+        for col in range(1, len(sample_data['2024-01']) + 1):
+            column_name = sample_data['2024-01'].columns[col - 1]
+            # Largura sugerida pelo style_config
+            width = COLUMN_WIDTHS.get(column_name, COLUMN_WIDTHS['default'])
+            # Largura baseada no conteúdo
+            max_content_width = max(
+                [len(str(cell)) for cell in [column_name] + sample_data['2024-01'][column_name].astype(str).tolist()]
+            )
+            # Ajusta para o maior valor entre o sugerido e o necessário (+2 para margem)
+            final_width = max(width, max_content_width + 2)
+            ws.column_dimensions[get_column_letter(col)].width = final_width 

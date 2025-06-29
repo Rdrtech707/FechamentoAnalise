@@ -272,7 +272,7 @@ def audit_pix_transactions(banco_transactions: List[PixTransaction],
 def generate_unified_report(cartao_results: List[Dict], pix_results: List[Dict], 
                            cartao_stats: Dict, recebimentos_transactions: List[PixTransaction],
                            output_file: str):
-    """Gera relatório Excel unificado"""
+    """Gera relatório Excel unificado com formatação otimizada"""
     try:
         # Garante que a pasta existe
         pasta = os.path.dirname(output_file)
@@ -323,6 +323,7 @@ def generate_unified_report(cartao_results: List[Dict], pix_results: List[Dict],
                 '',
                 datetime.now().strftime('%d/%m/%Y %H:%M:%S')
             ]
+            
             # Garante que as listas tenham o mesmo tamanho
             if len(metricas) != len(valores):
                 diff = abs(len(metricas) - len(valores))
@@ -330,6 +331,7 @@ def generate_unified_report(cartao_results: List[Dict], pix_results: List[Dict],
                     valores += [''] * diff
                 else:
                     metricas += [''] * diff
+                    
             summary_data = {'Métrica': metricas, 'Valor': valores}
             summary_df = pd.DataFrame(summary_data)
             safe_to_excel(summary_df, writer, 'Resumo Geral', theme, border_config)
@@ -337,25 +339,34 @@ def generate_unified_report(cartao_results: List[Dict], pix_results: List[Dict],
             # Auditoria de Cartão - Detalhes
             if cartao_results:
                 cartao_df = pd.DataFrame(cartao_results)
+                # Calcula diferença percentual apenas para linhas com diferença
                 cartao_df['dif_percentual'] = cartao_df.apply(
-                    lambda row: (row['diferenca'] / row['valor_cartao'] * 100) if row['diferenca'] is not None and row['valor_cartao'] else None, axis=1)
+                    lambda row: (row['diferenca'] / row['valor_cartao'] * 100) if row['diferenca'] is not None and row['valor_cartao'] and row['valor_cartao'] > 0 else None, axis=1)
+                
+                # Define colunas para exibição
                 colunas_cartao = [
                     'identificador', 'data_cartao', 'tipo_pagamento', 'valor_cartao', 'valor_gerado',
                     'diferenca', 'dif_percentual', 'status', 'observacao'
                 ]
                 cartao_df = cartao_df[[c for c in colunas_cartao if c in cartao_df.columns]]
-                if cartao_df.empty:
-                    cartao_df = pd.DataFrame({'Mensagem': ['Nenhuma transação de cartão encontrada']})
-                safe_to_excel(cartao_df, writer, 'Cartão - Detalhes', theme, border_config)
+                
+                if not cartao_df.empty:
+                    safe_to_excel(cartao_df, writer, 'Cartão - Detalhes', theme, border_config)
+                else:
+                    empty_df = pd.DataFrame({'Mensagem': ['Nenhuma transação de cartão encontrada']})
+                    safe_to_excel(empty_df, writer, 'Cartão - Detalhes', theme, border_config)
+                
+                # Divergências de Cartão
                 divergencias_cartao = [r for r in cartao_results if r['status'] in ['DIVERGENTE', 'NÃO ENCONTRADA', 'VALOR NÃO ENCONTRADO']]
                 if divergencias_cartao:
                     divergencias_df = pd.DataFrame(divergencias_cartao)
                     divergencias_df['dif_percentual'] = divergencias_df.apply(
-                        lambda row: (row['diferenca'] / row['valor_cartao'] * 100) if row['diferenca'] is not None and row['valor_cartao'] else None, axis=1)
+                        lambda row: (row['diferenca'] / row['valor_cartao'] * 100) if row['diferenca'] is not None and row['valor_cartao'] and row['valor_cartao'] > 0 else None, axis=1)
                     divergencias_df = divergencias_df[[c for c in colunas_cartao if c in divergencias_df.columns]]
-                    if divergencias_df.empty:
-                        divergencias_df = pd.DataFrame({'Mensagem': ['Nenhuma divergência encontrada']})
                     safe_to_excel(divergencias_df, writer, 'Cartão - Divergências', theme, border_config)
+                else:
+                    empty_df = pd.DataFrame({'Mensagem': ['Nenhuma divergência encontrada']})
+                    safe_to_excel(empty_df, writer, 'Cartão - Divergências', theme, border_config)
             else:
                 empty_df = pd.DataFrame({'Mensagem': ['Nenhuma transação de cartão encontrada']})
                 safe_to_excel(empty_df, writer, 'Cartão - Detalhes', theme, border_config)
@@ -363,15 +374,16 @@ def generate_unified_report(cartao_results: List[Dict], pix_results: List[Dict],
             # Auditoria PIX - Detalhes
             if pix_results:
                 pix_df = pd.DataFrame(pix_results)
-                if pix_df.empty:
-                    pix_df = pd.DataFrame({'Mensagem': ['Nenhuma transação PIX encontrada']})
                 safe_to_excel(pix_df, writer, 'PIX - Detalhes', theme, border_config)
+                
+                # PIX sem correspondência
                 pix_sem_correspondencia = [r for r in pix_results if r['status'] == 'SEM CORRESPONDÊNCIA']
                 if pix_sem_correspondencia:
                     pix_sem_df = pd.DataFrame(pix_sem_correspondencia)
-                    if pix_sem_df.empty:
-                        pix_sem_df = pd.DataFrame({'Mensagem': ['Nenhuma transação sem correspondência']})
                     safe_to_excel(pix_sem_df, writer, 'PIX - Sem Correspondência', theme, border_config)
+                else:
+                    empty_df = pd.DataFrame({'Mensagem': ['Nenhuma transação sem correspondência']})
+                    safe_to_excel(empty_df, writer, 'PIX - Sem Correspondência', theme, border_config)
             else:
                 empty_df = pd.DataFrame({'Mensagem': ['Nenhuma transação PIX encontrada']})
                 safe_to_excel(empty_df, writer, 'PIX - Detalhes', theme, border_config)
@@ -381,18 +393,109 @@ def generate_unified_report(cartao_results: List[Dict], pix_results: List[Dict],
         raise
 
 
+def configure_worksheet_properties(worksheet, sheet_name):
+    """Configura propriedades da planilha para melhor apresentação"""
+    from openpyxl.worksheet.views import SheetView
+    
+    # Configura view da planilha usando a API correta
+    if not hasattr(worksheet, 'sheet_view') or worksheet.sheet_view is None:
+        worksheet.sheet_view = SheetView()
+    
+    # Configura propriedades da view
+    worksheet.sheet_view.showGridLines = True
+    worksheet.sheet_view.showRowColHeaders = True
+    worksheet.sheet_view.zoomScale = 100
+    worksheet.sheet_view.zoomScaleNormal = 100
+    worksheet.sheet_view.zoomScalePageLayoutView = 100
+    
+    # Configura propriedades específicas por tipo de planilha
+    if 'Detalhes' in sheet_name:
+        # Para detalhes, ajusta zoom para melhor visualização
+        worksheet.sheet_view.zoomScale = 90
+    elif 'Divergências' in sheet_name or 'Sem Correspondência' in sheet_name:
+        # Para divergências, zoom menor para ver mais dados
+        worksheet.sheet_view.zoomScale = 85
+
+
 def safe_to_excel(df, writer, sheet_name, theme, border_config):
-    df = df.fillna('').astype(str)
-    # Corrige valores que começam com "="
-    for col in df.columns:
-        df[col] = df[col].apply(lambda x: "'" + x if isinstance(x, str) and x.startswith('=') else x)
-    df.to_excel(writer, sheet_name=sheet_name, index=False)
+    """Salva DataFrame no Excel com formatação segura e otimizada"""
+    # Processa o DataFrame para evitar problemas
+    df_processed = df.copy()
+    
+    # Preenche valores NaN
+    df_processed = df_processed.fillna('')
+    
+    # Converte para string e trata valores que começam com "="
+    for col in df_processed.columns:
+        df_processed[col] = df_processed[col].astype(str).apply(
+            lambda x: "'" + x if isinstance(x, str) and x.startswith('=') else x
+        )
+    
+    # Remove linhas completamente vazias
+    df_processed = df_processed.dropna(how='all')
+    
+    # Se o DataFrame ficou vazio, cria uma linha com mensagem
+    if df_processed.empty:
+        df_processed = pd.DataFrame({'Mensagem': ['Nenhum dado disponível para esta seção']})
+    
+    # Salva no Excel
+    df_processed.to_excel(writer, sheet_name=sheet_name, index=False)
+    
+    # Obtém a planilha e aplica formatação
     worksheet = writer.sheets[sheet_name]
-    apply_worksheet_formatting(worksheet, df, theme, border_config)
+    apply_worksheet_formatting(worksheet, df_processed, theme, border_config)
+    configure_worksheet_properties(worksheet, sheet_name)
+
+
+def optimize_column_widths(worksheet, df):
+    """Otimiza a largura das colunas baseada no conteúdo e configurações"""
+    from openpyxl.utils import get_column_letter
+    
+    for col in range(1, len(df.columns) + 1):
+        column_name = df.columns[col - 1]
+        
+        # Largura mínima baseada na configuração
+        min_width = COLUMN_WIDTHS.get(column_name, COLUMN_WIDTHS['default'])
+        
+        # Calcula largura baseada no conteúdo
+        header_length = len(str(column_name))
+        max_content_length = header_length
+        
+        # Analisa o conteúdo das células
+        for row in range(min(len(df), 100)):  # Limita a 100 linhas para performance
+            try:
+                cell_value = str(df.iloc[row, col - 1])
+                # Remove caracteres especiais para cálculo mais preciso
+                clean_value = cell_value.replace('R$', '').replace(',', '').replace('.', '')
+                max_content_length = max(max_content_length, len(clean_value))
+            except:
+                continue
+        
+        # Aplica fatores de ajuste baseados no tipo de coluna
+        if any(keyword in column_name.lower() for keyword in ['observacao', 'descricao', 'notes']):
+            # Colunas de texto longo - largura maior
+            content_width = max_content_length * 1.3
+            max_width = 100
+        elif any(keyword in column_name.lower() for keyword in ['valor', 'diferenca', 'percentual']):
+            # Colunas numéricas - largura fixa para formatação
+            content_width = max_content_length * 1.1
+            max_width = 25
+        elif 'data' in column_name.lower():
+            # Colunas de data - largura fixa
+            content_width = 15
+            max_width = 20
+        else:
+            # Colunas padrão
+            content_width = max_content_length * 1.2
+            max_width = 50
+        
+        # Define largura final
+        final_width = max(min_width, min(content_width, max_width))
+        worksheet.column_dimensions[get_column_letter(col)].width = final_width
 
 
 def apply_worksheet_formatting(worksheet, df, theme, border_config):
-    """Aplica formatação uniforme à planilha"""
+    """Aplica formatação uniforme à planilha com largura de colunas otimizada"""
     from openpyxl.styles import Font, PatternFill, Border, Side, Alignment
     from openpyxl.utils import get_column_letter
     
@@ -444,11 +547,8 @@ def apply_worksheet_formatting(worksheet, df, theme, border_config):
                     cell.number_format = DATE_FORMATS['pt_BR']
                     cell.alignment = Alignment(horizontal='center', vertical='center')
     
-    # Ajusta largura das colunas
-    for col in range(1, len(df.columns) + 1):
-        column_name = df.columns[col - 1]
-        width = COLUMN_WIDTHS.get(column_name, COLUMN_WIDTHS['default'])
-        worksheet.column_dimensions[get_column_letter(col)].width = width
+    # Otimiza largura das colunas
+    optimize_column_widths(worksheet, df)
 
 
 def main():

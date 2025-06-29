@@ -20,8 +20,9 @@ DATE_FORMATS = {
     'iso': 'yyyy-mm-dd',
 }
 
-# Configurações de largura das colunas
+# Configurações de largura das colunas - Expandido para auditoria unificada
 COLUMN_WIDTHS = {
+    # Colunas originais
     'N° OS': 12,
     'DATA ENCERRAMENTO': 18,
     'VALOR TOTAL': 15,
@@ -37,7 +38,40 @@ COLUMN_WIDTHS = {
     'PIX': 12,
     'TROCO': 12,
     'DATA PGTO': 15,
-    'default': 15,  # Largura padrão para colunas não especificadas
+    
+    # Colunas da auditoria de cartão
+    'identificador': 25,
+    'data_cartao': 15,
+    'tipo_pagamento': 15,
+    'valor_cartao': 15,
+    'valor_gerado': 15,
+    'diferenca': 15,
+    'dif_percentual': 15,
+    'status': 20,
+    'observacao': 50,
+    
+    # Colunas da auditoria PIX
+    'data_banco': 15,
+    'valor_banco': 15,
+    'descricao_banco': 60,
+    'data_recebimentos': 15,
+    'valor_recebimentos': 15,
+    'os_recebimentos': 15,
+    
+    # Colunas do resumo
+    'Métrica': 35,
+    'Valor': 20,
+    'Mensagem': 50,
+    
+    # Larguras específicas para melhor legibilidade
+    'descricao': 60,
+    'origem': 15,
+    'referencia': 20,
+    'match_type': 15,
+    'confidence': 15,
+    'notes': 50,
+    
+    'default': 20,  # Largura padrão aumentada para colunas não especificadas
 }
 
 # Configurações de bordas
