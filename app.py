@@ -8,7 +8,7 @@ from config import (
     ConfigError, get_config_summary
 )
 from modules.access_db import get_connection_context, DatabaseConnectionError, test_connection, get_database_info
-from modules.extractors import get_ordens, get_contas, get_fcaixa
+from modules.extractors import extract_all_data, ExtractionError
 from modules.processors import process_recebimentos
 from modules.exporters import export_to_excel
 
@@ -108,13 +108,9 @@ def main():
             with get_connection_context(MDB_FILE, MDB_PASSWORD) as conn:
                 logger.info("Conexão com banco de dados estabelecida com sucesso")
                 
-                # Extrai dados
-                logger.info("Extraindo dados das tabelas...")
+                # Extrai dados usando a nova função consolidada
                 try:
-                    ordens_df = get_ordens(conn)
-                    contas_df = get_contas(conn)
-                    fcaixa_df = get_fcaixa(conn)
-                    logger.info(f"Dados extraídos: {len(ordens_df)} ordens, {len(contas_df)} contas, {len(fcaixa_df)} registros FCAIXA")
+                    ordens_df, contas_df, fcaixa_df = extract_all_data(conn)
                     
                     # Aplica limite de registros se configurado
                     if MAX_RECORDS > 0:
@@ -123,9 +119,13 @@ def main():
                         contas_df = contas_df.head(MAX_RECORDS)
                         fcaixa_df = fcaixa_df.head(MAX_RECORDS)
                         
+                except ExtractionError as e:
+                    logger.error(f"Erro na extração de dados: {e}")
+                    print(f"❌ Erro na extração de dados: {e}")
+                    return
                 except Exception as e:
-                    logger.error(f"Erro ao extrair dados: {e}")
-                    print(f"❌ Erro ao extrair dados do banco: {e}")
+                    logger.error(f"Erro inesperado na extração: {e}")
+                    print(f"❌ Erro inesperado na extração: {e}")
                     return
                     
         except DatabaseConnectionError as e:
