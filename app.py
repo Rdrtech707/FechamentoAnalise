@@ -2,8 +2,12 @@ import pandas as pd
 import logging
 import sys
 from datetime import datetime
-from config import MDB_FILE, MDB_PASSWORD
-from modules.access_db import get_connection
+from config import (
+    MDB_FILE, MDB_PASSWORD, OUTPUT_DIR, LOG_LEVEL, LOG_FILE, 
+    FILE_ENCODING, MAX_RECORDS, EXCEL_SETTINGS, FORMATTING,
+    ConfigError, get_config_summary
+)
+from modules.access_db import get_connection_context, DatabaseConnectionError, test_connection, get_database_info
 from modules.extractors import get_ordens, get_contas, get_fcaixa
 from modules.processors import process_recebimentos
 from modules.exporters import export_to_excel
@@ -12,10 +16,10 @@ from modules.exporters import export_to_excel
 def setup_logging():
     """Configura o sistema de logging"""
     logging.basicConfig(
-        level=logging.INFO,
+        level=getattr(logging, LOG_LEVEL.upper()),
         format='%(asctime)s - %(levelname)s - %(message)s',
         handlers=[
-            logging.FileHandler('app.log', encoding='utf-8'),
+            logging.FileHandler(LOG_FILE, encoding=FILE_ENCODING),
             logging.StreamHandler(sys.stdout)
         ]
     )
@@ -67,6 +71,23 @@ def main():
     try:
         logger.info("Iniciando aplicação de processamento de recebimentos")
         
+        # Exibe resumo das configurações
+        config_summary = get_config_summary()
+        logger.info(f"Configurações carregadas: {config_summary}")
+        
+        # Testa conexão com banco antes de prosseguir
+        logger.info("Testando conexão com banco de dados...")
+        if not test_connection(MDB_FILE, MDB_PASSWORD):
+            print("❌ Falha no teste de conexão com banco de dados")
+            return
+        
+        # Obtém informações do banco
+        db_info = get_database_info(MDB_FILE, MDB_PASSWORD)
+        if db_info:
+            logger.info(f"Banco de dados: {db_info['file_path']}")
+            logger.info(f"Tabelas encontradas: {db_info['table_count']}")
+            #logger.info(f"Lista de tabelas: {db_info['tables']}")
+        
         # Pergunta mês e ano ao usuário
         year = input("Informe o ano (YYYY): ").strip()
         month = input("Informe o mês (MM): ").strip()
@@ -81,31 +102,40 @@ def main():
             print(f"❌ Erro: {e}")
             return
         
-        # Conecta e extrai dados
+        # Conecta e extrai dados usando context manager
         logger.info("Conectando ao banco de dados...")
         try:
-            conn = get_connection(MDB_FILE, MDB_PASSWORD)
-            logger.info("Conexão com banco de dados estabelecida com sucesso")
-        except Exception as e:
-            logger.error(f"Erro ao conectar ao banco de dados: {e}")
-            print(f"❌ Erro ao conectar ao banco de dados: {e}")
-            print("Verifique se o arquivo .mdb existe e a senha está correta")
+            with get_connection_context(MDB_FILE, MDB_PASSWORD) as conn:
+                logger.info("Conexão com banco de dados estabelecida com sucesso")
+                
+                # Extrai dados
+                logger.info("Extraindo dados das tabelas...")
+                try:
+                    ordens_df = get_ordens(conn)
+                    contas_df = get_contas(conn)
+                    fcaixa_df = get_fcaixa(conn)
+                    logger.info(f"Dados extraídos: {len(ordens_df)} ordens, {len(contas_df)} contas, {len(fcaixa_df)} registros FCAIXA")
+                    
+                    # Aplica limite de registros se configurado
+                    if MAX_RECORDS > 0:
+                        logger.info(f"Aplicando limite de {MAX_RECORDS} registros")
+                        ordens_df = ordens_df.head(MAX_RECORDS)
+                        contas_df = contas_df.head(MAX_RECORDS)
+                        fcaixa_df = fcaixa_df.head(MAX_RECORDS)
+                        
+                except Exception as e:
+                    logger.error(f"Erro ao extrair dados: {e}")
+                    print(f"❌ Erro ao extrair dados do banco: {e}")
+                    return
+                    
+        except DatabaseConnectionError as e:
+            logger.error(f"Erro de conexão com banco de dados: {e}")
+            print(f"❌ Erro de conexão com banco de dados: {e}")
             return
-        
-        # Extrai dados
-        logger.info("Extraindo dados das tabelas...")
-        try:
-            ordens_df = get_ordens(conn)
-            contas_df = get_contas(conn)
-            fcaixa_df = get_fcaixa(conn)
-            logger.info(f"Dados extraídos: {len(ordens_df)} ordens, {len(contas_df)} contas, {len(fcaixa_df)} registros FCAIXA")
         except Exception as e:
-            logger.error(f"Erro ao extrair dados: {e}")
-            print(f"❌ Erro ao extrair dados do banco: {e}")
+            logger.error(f"Erro inesperado na conexão: {e}")
+            print(f"❌ Erro inesperado na conexão: {e}")
             return
-        finally:
-            conn.close()
-            logger.info("Conexão com banco de dados fechada")
 
         # Processa recebimentos
         logger.info("Processando recebimentos...")
@@ -151,9 +181,9 @@ def main():
                 
                 # Exporta para Excel
                 try:
-                    export_to_excel({periodo: df_periodo}, output_dir='data/recebimentos')
-                    logger.info(f"Arquivo Excel gerado com sucesso")
-                    print(f"✅ Arquivo gerado: data/recebimentos/Recebimentos_{periodo}.xlsx")
+                    export_to_excel({periodo: df_periodo}, output_dir=OUTPUT_DIR)
+                    logger.info(f"Arquivo Excel gerado com sucesso em {OUTPUT_DIR}")
+                    print(f"✅ Arquivo gerado: {OUTPUT_DIR}/Recebimentos_{periodo}.xlsx")
                 except Exception as e:
                     logger.error(f"Erro ao exportar para Excel: {e}")
                     print(f"❌ Erro ao gerar arquivo Excel: {e}")
@@ -172,6 +202,9 @@ def main():
     except KeyboardInterrupt:
         logger.info("Aplicação interrompida pelo usuário")
         print("\n⚠️ Aplicação interrompida pelo usuário")
+    except ConfigError as e:
+        logger.error(f"Erro de configuração: {e}")
+        print(f"❌ Erro de configuração: {e}")
     except Exception as e:
         logger.error(f"Erro inesperado: {e}", exc_info=True)
         print(f"❌ Erro inesperado: {e}")
