@@ -11,7 +11,7 @@ from config import (
     ConfigError, get_config_summary
 )
 from modules.access_db import get_connection_context, DatabaseConnectionError, test_connection, get_database_info
-from modules.extractors import get_ordens, get_contas, get_fcaixa
+from modules.extractors import extract_all_data, ExtractionError
 from modules.processors import process_recebimentos
 from modules.exporters import export_to_excel
 
@@ -89,7 +89,7 @@ def main():
         if db_info:
             logger.info(f"Banco de dados: {db_info['file_path']}")
             logger.info(f"Tabelas encontradas: {db_info['table_count']}")
-            logger.info(f"Lista de tabelas: {db_info['tables']}")
+            #logger.info(f"Lista de tabelas: {db_info['tables']}")
         
         # Pergunta mês e ano ao usuário
         year = input("Informe o ano (YYYY): ").strip()
@@ -111,13 +111,9 @@ def main():
             with get_connection_context(MDB_FILE, MDB_PASSWORD) as conn:
                 logger.info("Conexão com banco de dados estabelecida com sucesso")
                 
-                # Extrai dados
-                logger.info("Extraindo dados das tabelas...")
+                # Extrai dados usando a nova função consolidada
                 try:
-                    ordens_df = get_ordens(conn)
-                    contas_df = get_contas(conn)
-                    fcaixa_df = get_fcaixa(conn)
-                    logger.info(f"Dados extraídos: {len(ordens_df)} ordens, {len(contas_df)} contas, {len(fcaixa_df)} registros FCAIXA")
+                    ordens_df, contas_df, fcaixa_df = extract_all_data(conn)
                     
                     # Aplica limite de registros se configurado
                     if MAX_RECORDS > 0:
@@ -126,9 +122,13 @@ def main():
                         contas_df = contas_df.head(MAX_RECORDS)
                         fcaixa_df = fcaixa_df.head(MAX_RECORDS)
                         
+                except ExtractionError as e:
+                    logger.error(f"Erro na extração de dados: {e}")
+                    print(f"❌ Erro na extração de dados: {e}")
+                    return
                 except Exception as e:
-                    logger.error(f"Erro ao extrair dados: {e}")
-                    print(f"❌ Erro ao extrair dados do banco: {e}")
+                    logger.error(f"Erro inesperado na extração: {e}")
+                    print(f"❌ Erro inesperado na extração: {e}")
                     return
                     
         except DatabaseConnectionError as e:
@@ -184,7 +184,11 @@ def main():
                 
                 # Exporta para Excel
                 try:
-                    export_to_excel({periodo: df_periodo}, output_dir=OUTPUT_DIR)
+                    export_to_excel(
+                        {periodo: df_periodo}, 
+                        output_dir=OUTPUT_DIR,
+                        border_theme='default'  # Pode ser alterado para 'corporate', 'dark', 'minimal'
+                    )
                     logger.info(f"Arquivo Excel gerado com sucesso em {OUTPUT_DIR}")
                     print(f"✅ Arquivo gerado: {OUTPUT_DIR}/Recebimentos_{periodo}.xlsx")
                 except Exception as e:
@@ -412,77 +416,320 @@ def get_connection(mdb_file: str, password: str):
     return pyodbc.connect(conn_str)
 
 
-# ================= modules/extractors.py =================
-# Arquivo: modules/extractors.py
+# ============================================================================
+# ARQUIVO: modules/extractors.py
+# ============================================================================
 
 import pandas as pd
+import logging
+from typing import List, Dict, Any
+from sqlalchemy import create_engine, text
+from sqlalchemy.exc import SQLAlchemyError
+
+
+class ExtractionError(Exception):
+    """Exceção personalizada para erros de extração de dados"""
+    pass
+
+
+def validate_required_columns(df: pd.DataFrame, table_name: str, expected_columns: List[str]) -> bool:
+    """
+    Valida se o DataFrame contém todas as colunas esperadas.
+    
+    Args:
+        df: DataFrame a ser validado
+        table_name: Nome da tabela para logging
+        expected_columns: Lista de colunas esperadas
+        
+    Returns:
+        bool: True se todas as colunas estão presentes
+        
+    Raises:
+        ExtractionError: Se colunas obrigatórias estiverem ausentes
+    """
+    missing_columns = [col for col in expected_columns if col not in df.columns]
+    
+    if missing_columns:
+        error_msg = f"Colunas obrigatórias ausentes na tabela {table_name}: {missing_columns}"
+        logging.error(error_msg)
+        logging.error(f"Colunas encontradas: {list(df.columns)}")
+        raise ExtractionError(error_msg)
+    
+    # Log de colunas extras (apenas warning)
+    extra_columns = [col for col in df.columns if col not in expected_columns]
+    if extra_columns:
+        logging.warning(f"Colunas extras encontradas na tabela {table_name}: {extra_columns}")
+    
+    return True
 
 
 def get_ordens(conn) -> pd.DataFrame:
     """
-    Extrai dados da tabela ORDEMS, excluindo serviços com SITUACAO = 11.
+    Extrai dados da tabela ORDENS usando SQL parametrizado.
+    
+    Args:
+        conn: Conexão com banco de dados
+        
+    Returns:
+        pd.DataFrame: Dados extraídos da tabela ORDENS
+        
+    Raises:
+        ExtractionError: Se houver erro na extração
     """
-    query = """
-    SELECT
-        CODIGO,
-        SAIDA,
-        V_MAO,
-        V_PECAS,
-        V_DESLOCA,
-        V_TERCEIRO,
-        V_OUTROS,
-        APARELHO,
-        MODELO,
-        SITUACAO
-    FROM ORDEMS
-    """
-    df = pd.read_sql_query(query, conn, parse_dates=["SAIDA"])
-    # Exclui ordens com SITUACAO == 11
-    df = df[df['SITUACAO'] != 11].copy()
-    # Remove coluna SITUACAO
-    return df.drop(columns=['SITUACAO'])
+    try:
+        # Define colunas esperadas
+        expected_columns = [
+            'N_OS', 'DATA_PGTO', 'VALOR_TOTAL', 'VALOR_MAO_DE_OBRA',
+            'VALOR_PECAS', 'DESCONTO', 'VEICULO_PLACA', 'CODIGO_CLIENTE', 'DATA_ENCERRAMENTO'
+        ]
+        
+        # Query parametrizada usando SQLAlchemy
+        query = text("""
+            SELECT 
+                N_OS,
+                DATA_PGTO,
+                VALOR_TOTAL,
+                VALOR_MAO_DE_OBRA,
+                VALOR_PECAS,
+                DESCONTO,
+                VEICULO_PLACA,
+                CODIGO_CLIENTE,
+                DATA_ENCERRAMENTO
+            FROM ORDENS
+        """)
+        
+        logging.info("Iniciando extração da tabela ORDENS...")
+        
+        # Executa query usando pandas
+        df = pd.read_sql(query, conn)
+        
+        # Valida colunas
+        validate_required_columns(df, 'ORDENS', expected_columns)
+        
+        # Log detalhado da extração
+        logging.info(f"✅ Extração ORDENS concluída: {len(df)} registros")
+        logging.info(f"   Colunas extraídas: {list(df.columns)}")
+        
+        # Log de estatísticas básicas
+        if not df.empty:
+            logging.info(f"   Período: {df['DATA_PGTO'].min()} a {df['DATA_PGTO'].max()}")
+            logging.info(f"   Valor total médio: {df['VALOR_TOTAL'].mean():.2f}")
+            logging.info(f"   Registros com desconto: {len(df[df['DESCONTO'] > 0])}")
+        
+        return df
+        
+    except SQLAlchemyError as e:
+        error_msg = f"Erro SQL na extração da tabela ORDENS: {e}"
+        logging.error(error_msg)
+        raise ExtractionError(error_msg)
+    except Exception as e:
+        error_msg = f"Erro inesperado na extração da tabela ORDENS: {e}"
+        logging.error(error_msg)
+        raise ExtractionError(error_msg)
 
 
 def get_contas(conn) -> pd.DataFrame:
     """
-    Extrai dados da tabela CONTAS:
-    - CODIGO, TIPO, COD_CLIENTE, PAGO, OBSERVACAO,
-      VALOR, REFERENCIA, ECF_DINHEIRO, ECF_CARTAO,
-      ECF_TROCO, DATA_PGTO
+    Extrai dados da tabela CONTAS usando SQL parametrizado.
+    
+    Args:
+        conn: Conexão com banco de dados
+        
+    Returns:
+        pd.DataFrame: Dados extraídos da tabela CONTAS
+        
+    Raises:
+        ExtractionError: Se houver erro na extração
     """
-    query = """
-    SELECT
-        CODIGO,
-        TIPO,
-        COD_CLIENTE,
-        PAGO,
-        OBSERVACAO,
-        VALOR,
-        REFERENCIA,
-        ECF_DINHEIRO,
-        ECF_CARTAO,
-        ECF_TROCO,
-        DATA_PGTO
-    FROM CONTAS
-    """
-    df = pd.read_sql_query(query, conn, parse_dates=["DATA_PGTO"])
-    return df
+    try:
+        # Define colunas esperadas
+        expected_columns = ['REFERENCIA', 'VALOR', 'PAGO', 'FORMA_PGTO']
+        
+        # Query parametrizada
+        query = text("""
+            SELECT 
+                REFERENCIA,
+                VALOR,
+                PAGO,
+                FORMA_PGTO
+            FROM CONTAS
+        """)
+        
+        logging.info("Iniciando extração da tabela CONTAS...")
+        
+        # Executa query
+        df = pd.read_sql(query, conn)
+        
+        # Valida colunas
+        validate_required_columns(df, 'CONTAS', expected_columns)
+        
+        # Log detalhado da extração
+        logging.info(f"✅ Extração CONTAS concluída: {len(df)} registros")
+        logging.info(f"   Colunas extraídas: {list(df.columns)}")
+        
+        # Log de estatísticas básicas
+        if not df.empty:
+            logging.info(f"   Referências únicas: {df['REFERENCIA'].nunique()}")
+            logging.info(f"   Registros pagos: {len(df[df['PAGO'] == 'S'])}")
+            logging.info(f"   Registros pendentes: {len(df[df['PAGO'] == 'N'])}")
+            logging.info(f"   Valor total: {df['VALOR'].sum():.2f}")
+        
+        return df
+        
+    except SQLAlchemyError as e:
+        error_msg = f"Erro SQL na extração da tabela CONTAS: {e}"
+        logging.error(error_msg)
+        raise ExtractionError(error_msg)
+    except Exception as e:
+        error_msg = f"Erro inesperado na extração da tabela CONTAS: {e}"
+        logging.error(error_msg)
+        raise ExtractionError(error_msg)
 
 
 def get_fcaixa(conn) -> pd.DataFrame:
     """
-    Extrai dados da tabela FCAIXA:
-    - RECEITA, COD_CONTA, FORMA
+    Extrai dados da tabela FCAIXA usando SQL parametrizado.
+    
+    Args:
+        conn: Conexão com banco de dados
+        
+    Returns:
+        pd.DataFrame: Dados extraídos da tabela FCAIXA
+        
+    Raises:
+        ExtractionError: Se houver erro na extração
     """
-    query = """
-    SELECT
-        RECEITA,
-        COD_CONTA,
-        FORMA
-    FROM FCAIXA
+    try:
+        # Define colunas esperadas
+        expected_columns = ['N_OS', 'DATA_PGTO', 'VALOR', 'FORMA_PGTO']
+        
+        # Query parametrizada
+        query = text("""
+            SELECT 
+                N_OS,
+                DATA_PGTO,
+                VALOR,
+                FORMA_PGTO
+            FROM FCAIXA
+        """)
+        
+        logging.info("Iniciando extração da tabela FCAIXA...")
+        
+        # Executa query
+        df = pd.read_sql(query, conn)
+        
+        # Valida colunas
+        validate_required_columns(df, 'FCAIXA', expected_columns)
+        
+        # Log detalhado da extração
+        logging.info(f"✅ Extração FCAIXA concluída: {len(df)} registros")
+        logging.info(f"   Colunas extraídas: {list(df.columns)}")
+        
+        # Log de estatísticas básicas
+        if not df.empty:
+            logging.info(f"   Ordens únicas: {df['N_OS'].nunique()}")
+            logging.info(f"   Período: {df['DATA_PGTO'].min()} a {df['DATA_PGTO'].max()}")
+            logging.info(f"   Valor total: {df['VALOR'].sum():.2f}")
+            
+            # Estatísticas por forma de pagamento
+            formas_pgto = df['FORMA_PGTO'].value_counts()
+            logging.info(f"   Formas de pagamento: {dict(formas_pgto)}")
+        
+        return df
+        
+    except SQLAlchemyError as e:
+        error_msg = f"Erro SQL na extração da tabela FCAIXA: {e}"
+        logging.error(error_msg)
+        raise ExtractionError(error_msg)
+    except Exception as e:
+        error_msg = f"Erro inesperado na extração da tabela FCAIXA: {e}"
+        logging.error(error_msg)
+        raise ExtractionError(error_msg)
+
+
+def get_extraction_summary(ordens_df: pd.DataFrame, contas_df: pd.DataFrame, fcaixa_df: pd.DataFrame) -> Dict[str, Any]:
     """
-    df = pd.read_sql_query(query, conn)
-    return df
+    Gera um resumo da extração de dados para auditoria.
+    
+    Args:
+        ordens_df: DataFrame da tabela ORDENS
+        contas_df: DataFrame da tabela CONTAS
+        fcaixa_df: DataFrame da tabela FCAIXA
+        
+    Returns:
+        dict: Resumo da extração
+    """
+    try:
+        summary = {
+            'timestamp': pd.Timestamp.now(),
+            'tables': {
+                'ORDENS': {
+                    'records': len(ordens_df),
+                    'columns': list(ordens_df.columns),
+                    'date_range': {
+                        'min': ordens_df['DATA_PGTO'].min() if not ordens_df.empty else None,
+                        'max': ordens_df['DATA_PGTO'].max() if not ordens_df.empty else None
+                    }
+                },
+                'CONTAS': {
+                    'records': len(contas_df),
+                    'columns': list(contas_df.columns),
+                    'unique_references': contas_df['REFERENCIA'].nunique() if not contas_df.empty else 0
+                },
+                'FCAIXA': {
+                    'records': len(fcaixa_df),
+                    'columns': list(fcaixa_df.columns),
+                    'unique_orders': fcaixa_df['N_OS'].nunique() if not fcaixa_df.empty else 0
+                }
+            },
+            'total_records': len(ordens_df) + len(contas_df) + len(fcaixa_df)
+        }
+        
+        logging.info("📊 RESUMO DA EXTRAÇÃO:")
+        logging.info(f"   Total de registros: {summary['total_records']}")
+        logging.info(f"   ORDENS: {summary['tables']['ORDENS']['records']} registros")
+        logging.info(f"   CONTAS: {summary['tables']['CONTAS']['records']} registros")
+        logging.info(f"   FCAIXA: {summary['tables']['FCAIXA']['records']} registros")
+        
+        return summary
+        
+    except Exception as e:
+        logging.error(f"Erro ao gerar resumo da extração: {e}")
+        return {}
+
+
+def extract_all_data(conn) -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame]:
+    """
+    Extrai dados de todas as tabelas necessárias.
+    
+    Args:
+        conn: Conexão com banco de dados
+        
+    Returns:
+        tuple: (ordens_df, contas_df, fcaixa_df)
+        
+    Raises:
+        ExtractionError: Se houver erro em qualquer extração
+    """
+    try:
+        logging.info("🚀 Iniciando extração completa de dados...")
+        
+        # Extrai dados de todas as tabelas
+        ordens_df = get_ordens(conn)
+        contas_df = get_contas(conn)
+        fcaixa_df = get_fcaixa(conn)
+        
+        # Gera resumo para auditoria
+        summary = get_extraction_summary(ordens_df, contas_df, fcaixa_df)
+        
+        logging.info("✅ Extração completa concluída com sucesso!")
+        
+        return ordens_df, contas_df, fcaixa_df
+        
+    except Exception as e:
+        error_msg = f"Erro na extração completa de dados: {e}"
+        logging.error(error_msg)
+        raise ExtractionError(error_msg)
 
 
 # ================= modules/processors.py =================
@@ -507,14 +754,14 @@ def process_recebimentos(
     """
     # --- Prepara ordens ---
     ordens = ordens_df.copy()
-    ordens['VALOR TOTAL'] = ordens[['V_MAO','V_PECAS','V_DESLOCA','V_TERCEIRO','V_OUTROS']].sum(axis=1)
+    ordens['VALOR TOTAL'] = ordens[['VALOR_MAO_DE_OBRA','VALOR_PECAS','VALOR_DESLOCA','VALOR_TERCEIRO','VALOR_OUTROS']].sum(axis=1)
     ordens['VEÍCULO (PLACA)'] = ordens['APARELHO'] + ' (' + ordens['MODELO'] + ')'
     ordens_proc = ordens.rename(columns={
         'CODIGO': 'N° OS',
         'SAIDA': 'DATA ENCERRAMENTO',
-        'V_MAO': 'VALOR MÃO DE OBRA',
-        'V_PECAS': 'VALOR PEÇAS',
-        'V_OUTROS': 'DESCONTO'
+        'VALOR_MAO_DE_OBRA': 'VALOR MÃO DE OBRA',
+        'VALOR_PECAS': 'VALOR PEÇAS',
+        'VALOR_OUTROS': 'DESCONTO'
     })[[
         'N° OS','DATA ENCERRAMENTO','VALOR TOTAL',
         'VALOR MÃO DE OBRA','VALOR PEÇAS','DESCONTO','VEÍCULO (PLACA)'
@@ -529,8 +776,8 @@ def process_recebimentos(
         .fillna('0')
         .astype(int)
     )
-    pix_receita = fcaixa[fcaixa['FORMA'] == 5].groupby('COD_CONTA')['RECEITA'].sum()
-    dinheiro_receita = fcaixa[fcaixa['FORMA'] == 0].groupby('COD_CONTA')['RECEITA'].sum()
+    pix_receita = fcaixa[fcaixa['FORMA_PGTO'] == 5].groupby('COD_CONTA')['VALOR'].sum()
+    dinheiro_receita = fcaixa[fcaixa['FORMA_PGTO'] == 0].groupby('COD_CONTA')['VALOR'].sum()
 
     # --- Prepara CONTAS para VALOR PAGO (PAGO = 'S') ---
     contas_pagas = contas_df.copy()
@@ -562,7 +809,7 @@ def process_recebimentos(
     # --- Garante que DATA_PGTO seja datetime e agrega por OS ---
     contas_pagas['DATA_PGTO'] = pd.to_datetime(contas_pagas['DATA_PGTO'], errors='coerce')
     agg_pagas = contas_pagas.groupby('OS').agg({
-        'COD_CLIENTE': 'first',
+        'CODIGO_CLIENTE': 'first',
         'VALOR': 'sum',
         'ECF_CARTAO': 'sum',
         'DINHEIRO': 'sum',
@@ -570,7 +817,7 @@ def process_recebimentos(
         'ECF_TROCO': 'sum',
         'DATA_PGTO': 'max'
     }).rename(columns={
-        'COD_CLIENTE': 'CÓDIGO CLIENTE',
+        'CODIGO_CLIENTE': 'CÓDIGO CLIENTE',
         'VALOR': 'VALOR PAGO',
         'ECF_CARTAO': 'CARTÃO',
         'ECF_TROCO': 'TROCO',
@@ -606,25 +853,34 @@ def process_recebimentos(
 import os
 import pandas as pd
 from openpyxl.utils import get_column_letter
-from openpyxl.styles import Alignment
+from openpyxl.styles import Alignment, PatternFill, Font, Border, Side
+from style_config import (
+    CONTABEIS_COLS, CURRENCY_FORMATS, DATE_FORMATS, THEMES, 
+    DECIMAL_SEPARATORS, COLUMN_WIDTHS, BORDER_STYLES, BORDER_CONFIGS
+)
 
-
-def export_to_excel(dataframes_by_month: dict, output_dir: str):
+def export_to_excel(
+    dataframes_by_month: dict,
+    output_dir: str,
+    currency: str = 'BRL',
+    language: str = 'pt_BR',
+    theme: str = 'default',
+    decimal_separator: str = None,
+    border_theme: str = 'default'
+):
     """
     Salva cada DataFrame em planilhas Excel separadas por mês,
     ajustando automaticamente a largura das colunas e formatando
     colunas numéricas em estilo contábil com duas casas decimais.
-
-    - dataframes_by_month: {"YYYY-MM": pd.DataFrame}
-    - output_dir: pasta onde salvar os arquivos
+    Permite customizar símbolo, separador decimal, tema de cores e bordas.
     """
     os.makedirs(output_dir, exist_ok=True)
 
-    contabeis = [
-        "VALOR TOTAL", "VALOR MÃO DE OBRA", "VALOR PEÇAS",
-        "DESCONTO", "VALOR PAGO", "DEVEDOR", "CARTÃO", "DINHEIRO",
-        "PIX", "TROCO"
-    ]
+    currency_format = CURRENCY_FORMATS.get(currency, 'R$ #,##0.00')
+    date_format = DATE_FORMATS.get(language, 'dd/mm/yyyy')
+    theme_cfg = THEMES.get(theme, THEMES['default'])
+    border_cfg = BORDER_CONFIGS.get(border_theme, BORDER_CONFIGS['default'])
+    decimal_sep = decimal_separator or DECIMAL_SEPARATORS.get(language, ',')
 
     for month, df in dataframes_by_month.items():
         filepath = os.path.join(output_dir, f"Recebimentos_{month}.xlsx")
@@ -633,19 +889,55 @@ def export_to_excel(dataframes_by_month: dict, output_dir: str):
             df.to_excel(writer, sheet_name=sheet_name, index=False)
             ws = writer.sheets[sheet_name]
 
+            # Estilo de cabeçalho
+            header_fill = PatternFill(start_color=theme_cfg['header_bg'], end_color=theme_cfg['header_bg'], fill_type='solid')
+            header_font = Font(color=theme_cfg['header_font'], bold=True)
+
+            # Configurar bordas
+            border_color = border_cfg['border_color']
+            header_border_style = BORDER_STYLES.get(border_cfg['header_border'])
+            data_border_style = BORDER_STYLES.get(border_cfg['data_border'])
+
             for idx, col in enumerate(df.columns, start=1):
-                # Ajusta largura de cada coluna com base no conteúdo
-                max_length = max(
-                    df[col].astype(str).map(len).max(),
-                    len(col)
-                ) + 2
-                ws.column_dimensions[get_column_letter(idx)].width = max_length
+                # Ajusta largura da coluna usando configuração personalizada
+                column_width = COLUMN_WIDTHS.get(col, COLUMN_WIDTHS['default'])
+                ws.column_dimensions[get_column_letter(idx)].width = column_width
 
                 # Aplica formatação contábil para colunas numéricas
-                if col in contabeis:
-                    for cell in ws[get_column_letter(idx)][1:]:
-                        cell.number_format = 'R$ #,##0.00'
+                if col in CONTABEIS_COLS:
+                    for row_idx, cell in enumerate(ws[get_column_letter(idx)][1:], start=2):
+                        cell.number_format = currency_format
                         cell.alignment = Alignment(horizontal='left')
+                        cell.fill = PatternFill(start_color=theme_cfg['contabil_bg'], end_color=theme_cfg['contabil_bg'], fill_type='solid')
+                        cell.font = Font(color=theme_cfg['contabil_font'])
+                        
+                        # Aplica bordas aos dados
+                        if data_border_style:
+                            cell.border = Border(
+                                left=Side(style=data_border_style, color=border_color),
+                                right=Side(style=data_border_style, color=border_color),
+                                top=Side(style=data_border_style, color=border_color),
+                                bottom=Side(style=data_border_style, color=border_color)
+                            )
+
+                # Aplica estilo ao cabeçalho
+                header_cell = ws[f"{get_column_letter(idx)}1"]
+                header_cell.fill = header_fill
+                header_cell.font = header_font
+                header_cell.alignment = Alignment(horizontal='center')
+                
+                # Aplica bordas ao cabeçalho
+                if header_border_style:
+                    header_cell.border = Border(
+                        left=Side(style=header_border_style, color=border_color),
+                        right=Side(style=header_border_style, color=border_color),
+                        top=Side(style=header_border_style, color=border_color),
+                        bottom=Side(style=header_border_style, color=border_color)
+                    )
+
+            # Ajusta separador decimal se necessário (apenas visual, não altera valores)
+            # (Excel usa o separador do sistema, mas podemos ajustar o formato se necessário)
+            # Não implementado aqui pois depende do Excel do usuário
 
 
 # ================= utils/helpers.py =================
