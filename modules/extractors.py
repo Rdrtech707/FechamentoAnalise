@@ -59,18 +59,18 @@ def get_ordens(conn) -> pd.DataFrame:
         
         # Query como string simples para compatibilidade com pyodbc
         query = """
-            SELECT 
-                CODIGO,
-                COD_CLIENTE,
-                SAIDA,
-                V_MAO,
-                V_PECAS,
-                V_DESLOCA,
-                V_TERCEIRO,
-                V_OUTROS,
-                APARELHO,
-                MODELO
-            FROM ORDEMS
+        SELECT
+            CODIGO,
+            COD_CLIENTE,
+            SAIDA,
+            V_MAO,
+            V_PECAS,
+            V_DESLOCA,
+            V_TERCEIRO,
+            V_OUTROS,
+            APARELHO,
+            MODELO
+        FROM ORDEMS
         """
         
         logging.info("Iniciando extração da tabela ORDEMS...")
@@ -118,17 +118,17 @@ def get_contas(conn) -> pd.DataFrame:
         
         # Query como string simples para compatibilidade com pyodbc
         query = """
-            SELECT 
-                CODIGO,
-                REFERENCIA,
-                VALOR,
-                PAGO,
-                DATA_PGTO,
-                COD_CLIENTE,
-                ECF_CARTAO,
-                ECF_DINHEIRO,
-                ECF_TROCO
-            FROM CONTAS
+        SELECT
+            CODIGO,
+            REFERENCIA,
+            VALOR,
+            PAGO,
+            DATA_PGTO,
+            COD_CLIENTE,
+            ECF_CARTAO,
+            ECF_DINHEIRO,
+            ECF_TROCO
+        FROM CONTAS
         """
         
         logging.info("Iniciando extração da tabela CONTAS...")
@@ -177,13 +177,13 @@ def get_fcaixa(conn) -> pd.DataFrame:
         
         # Query como string simples para compatibilidade com pyodbc
         query = """
-            SELECT 
-                CODIGO,
-                DIA,
-                RECEITA,
-                COD_CONTA,
-                FORMA
-            FROM FCAIXA
+        SELECT
+            CODIGO,
+            DIA,
+            RECEITA,
+            COD_CONTA,
+            FORMA
+        FROM FCAIXA
         """
         
         logging.info("Iniciando extração da tabela FCAIXA...")
