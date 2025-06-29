@@ -1,0 +1,58 @@
+================================================================================
+RELATÓRIO DE AUDITORIA PIX UNIFICADA
+================================================================================
+Data da auditoria: 29/06/2025 16:59:29
+
+Transações PIX do banco sem correspondência nos recebimentos:
+--------------------------------------------------------------------------------
+Data: 02/06/2025 | Valor: R$ 28,782.10
+Descrição: Transferência recebida pelo Pix - 707 MOTORSPORT LTDA - 19.011.819/0001-82 - CLOUDWALK IP LTDA (0542) Agência: 1 Conta: 213503996301465909-5
+--------------------------------------------------------------------------------
+Data: 03/06/2025 | Valor: R$ 636.70
+Descrição: Transferência recebida pelo Pix - VERA REGINA BERGER PROENCA - •••.314.760-•• - CAIXA ECONOMICA FEDERAL (0104) Agência: 450 Conta: 596653383-7
+--------------------------------------------------------------------------------
+Data: 06/06/2025 | Valor: R$ 400.00
+Descrição: Transferência recebida pelo Pix - NELSON GRIZA BALLARDIN - •••.327.440-•• - CAIXA ECONOMICA FEDERAL (0104) Agência: 442 Conta: 595827308-2
+--------------------------------------------------------------------------------
+Data: 10/06/2025 | Valor: R$ 1,189.00
+Descrição: Transferência recebida pelo Pix - CILON DA SILVA OLIVEIRA - •••.692.770-•• - BCO DO BRASIL S.A. (0001) Agência: 5087 Conta: 37494-6
+--------------------------------------------------------------------------------
+Data: 12/06/2025 | Valor: R$ 12,907.26
+Descrição: Transferência recebida pelo Pix - 707 MOTORSPORT LTDA - 19.011.819/0001-82 - CLOUDWALK IP LTDA (0542) Agência: 1 Conta: 213503996301465909-5
+--------------------------------------------------------------------------------
+Data: 13/06/2025 | Valor: R$ 1,222.27
+Descrição: Transferência recebida pelo Pix - VICTOR RODRIGUES SIMOES - •••.800.350-•• - Banco do Estado do Rio Grande do Sul (0041) Agência: 100 Conta: 350297330-0
+--------------------------------------------------------------------------------
+Data: 13/06/2025 | Valor: R$ 1,013.65
+Descrição: Transferência recebida pelo Pix - CESAR BERGER PROENCA - •••.742.590-•• - CAIXA ECONOMICA FEDERAL (0104) Agência: 450 Conta: 814759133-9
+--------------------------------------------------------------------------------
+Data: 18/06/2025 | Valor: R$ 9,930.87
+Descrição: Transferência recebida pelo Pix - 707 MOTORSPORT LTDA - 19.011.819/0001-82 - CLOUDWALK IP LTDA (0542) Agência: 1 Conta: 213503996301465909-5
+--------------------------------------------------------------------------------
+Data: 20/06/2025 | Valor: R$ 940.67
+Descrição: Transferência recebida pelo Pix - NATALIA VALIM MANSAN DE QUADROS - •••.001.000-•• - Banco do Estado do Rio Grande do Sul (0041) Agência: 11 Conta: 390294960-7
+--------------------------------------------------------------------------------
+Data: 25/06/2025 | Valor: R$ 640.97
+Descrição: Transferência recebida pelo Pix - Gx Construções E Montagens - 44.424.316/0001-86 - BCO C6 S.A. (0336) Agência: 1 Conta: 14550646-0
+--------------------------------------------------------------------------------
+Data: 25/06/2025 | Valor: R$ 398.01
+Descrição: Transferência recebida pelo Pix - VICTOR RODRIGUES SIMOES - •••.800.350-•• - CAIXA ECONOMICA FEDERAL (0104) Agência: 623 Conta: 593903906-1
+--------------------------------------------------------------------------------
+Data: 26/06/2025 | Valor: R$ 1,889.64
+Descrição: Transferência recebida pelo Pix - LIVELE ANICET - •••.937.800-•• - BCO DO BRASIL S.A. (0001) Agência: 4611 Conta: 31092-1
+--------------------------------------------------------------------------------
+Data: 26/06/2025 | Valor: R$ 520.00
+Descrição: Transferência recebida pelo Pix - SIEGERT PARTICIPACOES LTDA - 05.658.320/0001-57 - Banco do Estado do Rio Grande do Sul (0041) Agência: 85 Conta: 61196480-7
+--------------------------------------------------------------------------------
+Data: 26/06/2025 | Valor: R$ 300.00
+Descrição: Transferência recebida pelo Pix - MARCIO FRAGOSO STUMPF LENA - •••.465.300-•• - BCO BRADESCO S.A. (0237) Agência: 7210 Conta: 76076-5
+--------------------------------------------------------------------------------
+Data: 27/06/2025 | Valor: R$ 2,000.00
+Descrição: Transferência recebida pelo Pix - RICARDO BARRETO - •••.397.860-•• - CAIXA ECONOMICA FEDERAL (0104) Agência: 429 Conta: 594327567-0
+--------------------------------------------------------------------------------
+Data: 27/06/2025 | Valor: R$ 722.96
+Descrição: Transferência recebida pelo Pix - RICARDO BARRETO - •••.397.860-•• - CAIXA ECONOMICA FEDERAL (0104) Agência: 429 Conta: 594327567-0
+--------------------------------------------------------------------------------
+Data: 27/06/2025 | Valor: R$ 213.00
+Descrição: Transferência recebida pelo Pix - MARIO CEZAR PERFEITO BARCELLOS - •••.091.150-•• - Banco do Estado do Rio Grande do Sul (0041) Agência: 597 Conta: 85916060-1
+--------------------------------------------------------------------------------

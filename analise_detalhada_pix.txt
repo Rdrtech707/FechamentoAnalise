@@ -1,0 +1,184 @@
+====================================================================================================
+ANÁLISE DETALHADA PIX - BANCO vs RECEBIMENTOS
+====================================================================================================
+Data da análise: 29/06/2025 16:57:12
+
+RESUMO ESTATÍSTICO
+--------------------------------------------------
+Total de transações PIX do banco: 17
+Total de transações PIX dos recebimentos: 15
+Valor total PIX do banco: R$ 63,707.10
+Valor total PIX dos recebimentos: R$ 16,727.27
+
+TRANSAÇÕES PIX DO BANCO
+--------------------------------------------------
+ 1. 02/06/2025 - R$  28,782.10 - Transferência recebida pelo Pix - 707 MOTORSPORT LTDA - 19.011.819/0001-82 - CLO...
+ 2. 03/06/2025 - R$     636.70 - Transferência recebida pelo Pix - VERA REGINA BERGER PROENCA - •••.314.760-•• - ...
+ 3. 06/06/2025 - R$     400.00 - Transferência recebida pelo Pix - NELSON GRIZA BALLARDIN - •••.327.440-•• - CAIX...
+ 4. 10/06/2025 - R$   1,189.00 - Transferência recebida pelo Pix - CILON DA SILVA OLIVEIRA - •••.692.770-•• - BCO...
+ 5. 12/06/2025 - R$  12,907.26 - Transferência recebida pelo Pix - 707 MOTORSPORT LTDA - 19.011.819/0001-82 - CLO...
+ 6. 13/06/2025 - R$   1,222.27 - Transferência recebida pelo Pix - VICTOR RODRIGUES SIMOES - •••.800.350-•• - Ban...
+ 7. 13/06/2025 - R$   1,013.65 - Transferência recebida pelo Pix - CESAR BERGER PROENCA - •••.742.590-•• - CAIXA ...
+ 8. 18/06/2025 - R$   9,930.87 - Transferência recebida pelo Pix - 707 MOTORSPORT LTDA - 19.011.819/0001-82 - CLO...
+ 9. 20/06/2025 - R$     940.67 - Transferência recebida pelo Pix - NATALIA VALIM MANSAN DE QUADROS - •••.001.000-...
+10. 25/06/2025 - R$     640.97 - Transferência recebida pelo Pix - Gx Construções E Montagens - 44.424.316/0001-8...
+11. 25/06/2025 - R$     398.01 - Transferência recebida pelo Pix - VICTOR RODRIGUES SIMOES - •••.800.350-•• - CAI...
+12. 26/06/2025 - R$   1,889.64 - Transferência recebida pelo Pix - LIVELE ANICET - •••.937.800-•• - BCO DO BRASIL...
+13. 26/06/2025 - R$     520.00 - Transferência recebida pelo Pix - SIEGERT PARTICIPACOES LTDA - 05.658.320/0001-5...
+14. 26/06/2025 - R$     300.00 - Transferência recebida pelo Pix - MARCIO FRAGOSO STUMPF LENA - •••.465.300-•• - ...
+15. 27/06/2025 - R$   2,000.00 - Transferência recebida pelo Pix - RICARDO BARRETO - •••.397.860-•• - CAIXA ECONO...
+16. 27/06/2025 - R$     722.96 - Transferência recebida pelo Pix - RICARDO BARRETO - •••.397.860-•• - CAIXA ECONO...
+17. 27/06/2025 - R$     213.00 - Transferência recebida pelo Pix - MARIO CEZAR PERFEITO BARCELLOS - •••.091.150-•...
+
+TRANSAÇÕES PIX DOS RECEBIMENTOS
+--------------------------------------------------
+ 1. 2025-06-02 00:00:00 - R$   3,885.00 - Recebimento PIX - OS: 3921
+ 2. 2025-06-26 00:00:00 - R$     669.39 - Recebimento PIX - OS: 3922
+ 3. 2025-06-20 00:00:00 - R$     940.67 - Recebimento PIX - OS: 3930
+ 4. 2025-06-03 00:00:00 - R$     636.70 - Recebimento PIX - OS: 3938
+ 5. 2025-06-04 00:00:00 - R$   1,000.00 - Recebimento PIX - OS: 3939
+ 6. 2025-06-09 00:00:00 - R$     767.40 - Recebimento PIX - OS: 3948
+ 7. 2025-06-10 00:00:00 - R$   1,189.00 - Recebimento PIX - OS: 3949
+ 8. 2025-06-13 00:00:00 - R$   1,013.65 - Recebimento PIX - OS: 3952
+ 9. 2025-06-13 00:00:00 - R$   1,222.27 - Recebimento PIX - OS: 3953
+10. 2025-06-12 00:00:00 - R$     208.00 - Recebimento PIX - OS: 3957
+11. 2025-06-26 00:00:00 - R$   1,220.25 - Recebimento PIX - OS: 3975
+12. 2025-06-25 00:00:00 - R$     640.97 - Recebimento PIX - OS: 3976
+13. 2025-06-27 00:00:00 - R$   2,722.96 - Recebimento PIX - OS: 3978
+14. 2025-06-25 00:00:00 - R$     398.01 - Recebimento PIX - OS: 3979
+15. 2025-06-27 00:00:00 - R$     213.00 - Recebimento PIX - OS: 3981
+
+ANÁLISE DE VALORES
+--------------------------------------------------
+Valores únicos do banco:
+  R$     213.00
+  R$     300.00
+  R$     398.01
+  R$     400.00
+  R$     520.00
+  R$     636.70
+  R$     640.97
+  R$     722.96
+  R$     940.67
+  R$   1,013.65
+  R$   1,189.00
+  R$   1,222.27
+  R$   1,889.64
+  R$   2,000.00
+  R$   9,930.87
+  R$  12,907.26
+  R$  28,782.10
+
+Valores únicos dos recebimentos:
+  R$     208.00
+  R$     213.00
+  R$     398.01
+  R$     636.70
+  R$     640.97
+  R$     669.39
+  R$     767.40
+  R$     940.67
+  R$   1,000.00
+  R$   1,013.65
+  R$   1,189.00
+  R$   1,220.25
+  R$   1,222.27
+  R$   2,722.96
+  R$   3,885.00
+
+ANÁLISE DE DATAS
+--------------------------------------------------
+Datas únicas do banco:
+  02/06/2025
+  03/06/2025
+  06/06/2025
+  10/06/2025
+  12/06/2025
+  13/06/2025
+  18/06/2025
+  20/06/2025
+  25/06/2025
+  26/06/2025
+  27/06/2025
+
+Datas únicas dos recebimentos:
+  2025-06-02 00:00:00
+  2025-06-03 00:00:00
+  2025-06-04 00:00:00
+  2025-06-09 00:00:00
+  2025-06-10 00:00:00
+  2025-06-12 00:00:00
+  2025-06-13 00:00:00
+  2025-06-20 00:00:00
+  2025-06-25 00:00:00
+  2025-06-26 00:00:00
+  2025-06-27 00:00:00
+
+TENTATIVA DE CORRESPONDÊNCIA POR VALOR
+--------------------------------------------------
+
+Valor do banco: R$ 28,782.10 (02/06/2025)
+  ✗ Nenhuma correspondência encontrada
+
+Valor do banco: R$ 636.70 (03/06/2025)
+  ✓ Correspondências encontradas:
+    - R$ 636.70 (2025-06-03 00:00:00) - Recebimento PIX - OS: 3938
+
+Valor do banco: R$ 400.00 (06/06/2025)
+  ✗ Nenhuma correspondência encontrada
+
+Valor do banco: R$ 1,189.00 (10/06/2025)
+  ✓ Correspondências encontradas:
+    - R$ 1,189.00 (2025-06-10 00:00:00) - Recebimento PIX - OS: 3949
+
+Valor do banco: R$ 12,907.26 (12/06/2025)
+  ✗ Nenhuma correspondência encontrada
+
+Valor do banco: R$ 1,222.27 (13/06/2025)
+  ✓ Correspondências encontradas:
+    - R$ 1,222.27 (2025-06-13 00:00:00) - Recebimento PIX - OS: 3953
+
+Valor do banco: R$ 1,013.65 (13/06/2025)
+  ✓ Correspondências encontradas:
+    - R$ 1,013.65 (2025-06-13 00:00:00) - Recebimento PIX - OS: 3952
+
+Valor do banco: R$ 9,930.87 (18/06/2025)
+  ✗ Nenhuma correspondência encontrada
+
+Valor do banco: R$ 940.67 (20/06/2025)
+  ✓ Correspondências encontradas:
+    - R$ 940.67 (2025-06-20 00:00:00) - Recebimento PIX - OS: 3930
+
+Valor do banco: R$ 640.97 (25/06/2025)
+  ✓ Correspondências encontradas:
+    - R$ 640.97 (2025-06-25 00:00:00) - Recebimento PIX - OS: 3976
+
+Valor do banco: R$ 398.01 (25/06/2025)
+  ✓ Correspondências encontradas:
+    - R$ 398.01 (2025-06-25 00:00:00) - Recebimento PIX - OS: 3979
+
+Valor do banco: R$ 1,889.64 (26/06/2025)
+  ✗ Nenhuma correspondência encontrada
+
+Valor do banco: R$ 520.00 (26/06/2025)
+  ✗ Nenhuma correspondência encontrada
+
+Valor do banco: R$ 300.00 (26/06/2025)
+  ✗ Nenhuma correspondência encontrada
+
+Valor do banco: R$ 2,000.00 (27/06/2025)
+  ✗ Nenhuma correspondência encontrada
+
+Valor do banco: R$ 722.96 (27/06/2025)
+  ✗ Nenhuma correspondência encontrada
+
+Valor do banco: R$ 213.00 (27/06/2025)
+  ✓ Correspondências encontradas:
+    - R$ 213.00 (2025-06-27 00:00:00) - Recebimento PIX - OS: 3981
+
+ANÁLISE DE DIFERENÇAS
+--------------------------------------------------
+Valor total banco: R$ 63,707.10
+Valor total recebimentos: R$ 16,727.27
+Diferença: R$ 46,979.83
+Percentual de diferença: 73.74%
