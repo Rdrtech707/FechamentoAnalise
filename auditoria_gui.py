@@ -24,12 +24,14 @@ class AuditoriaGUI:
         self.cartao_csv = tk.StringVar()
         self.banco_csv = tk.StringVar()
         self.recebimentos_excel = tk.StringVar()
+        self.nfse_directory = tk.StringVar()
         self.output_dir = tk.StringVar()
         
         # Configurações padrão
         self.cartao_csv.set("data/extratos/report_20250628_194465.csv")
         self.banco_csv.set("data/extratos/NU_636868111_01JUN2025_27JUN2025.csv")
         self.recebimentos_excel.set("data/recebimentos/Recebimentos_2025-06.xlsx")
+        self.nfse_directory.set("data/06-JUN")
         self.output_dir.set("data/relatorios")
         
         self.setup_ui()
@@ -67,6 +69,11 @@ class AuditoriaGUI:
         ttk.Label(input_frame, text="Excel de Recebimentos:").grid(row=2, column=0, sticky="w", pady=2)
         ttk.Entry(input_frame, textvariable=self.recebimentos_excel, width=50).grid(row=2, column=1, padx=5, pady=2)
         ttk.Button(input_frame, text="Selecionar", command=lambda: self.select_file(self.recebimentos_excel, [("Excel files", "*.xlsx")])).grid(row=2, column=2, pady=2)
+        
+        # Pasta das Notas Fiscais (NFSe)
+        ttk.Label(input_frame, text="Pasta das Notas Fiscais (NFSe):").grid(row=3, column=0, sticky="w", pady=2)
+        ttk.Entry(input_frame, textvariable=self.nfse_directory, width=50).grid(row=3, column=1, padx=5, pady=2)
+        ttk.Button(input_frame, text="Selecionar", command=lambda: self.select_directory_for_var(self.nfse_directory)).grid(row=3, column=2, pady=2)
         
         # Seção de pasta de destino
         output_frame = ttk.LabelFrame(main_frame, text="Pasta de Destino", padding="10")
@@ -131,6 +138,12 @@ class AuditoriaGUI:
         if directory:
             self.output_dir.set(directory)
     
+    def select_directory_for_var(self, string_var):
+        """Abre diálogo para seleção de pasta e atribui à variável especificada"""
+        directory = filedialog.askdirectory()
+        if directory:
+            string_var.set(directory)
+    
     def open_file(self, filepath):
         """Abre arquivo com aplicação padrão"""
         try:
@@ -165,6 +178,13 @@ class AuditoriaGUI:
             ("CSV do Banco", self.banco_csv.get()),
             ("Excel de Recebimentos", self.recebimentos_excel.get())
         ]
+        
+        # Verifica se a pasta das notas fiscais existe
+        nfse_dir = self.nfse_directory.get()
+        if not os.path.exists(nfse_dir):
+            error_msg = f"Pasta das Notas Fiscais não encontrada: {nfse_dir}"
+            messagebox.showerror("Pasta não encontrada", error_msg)
+            return False
         
         missing_files = []
         for name, path in files_to_check:
@@ -213,6 +233,7 @@ class AuditoriaGUI:
                 cartao_csv=self.cartao_csv.get(),
                 banco_csv=self.banco_csv.get(),
                 recebimentos_excel=self.recebimentos_excel.get(),
+                nfse_directory=self.nfse_directory.get(),
                 output_file=output_file
             )
             

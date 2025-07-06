@@ -601,7 +601,7 @@ def group_recebimentos_by_date(transactions: List[PixTransaction]) -> List[Group
     return grouped_transactions
 
 
-def generate_unified_report(cartao_results, pix_results, cartao_stats, recebimentos_transactions, banco_transactions, output_file, banco_pix_csv):
+def generate_unified_report(cartao_results, pix_results, cartao_stats, recebimentos_transactions, banco_transactions, output_file, banco_pix_csv, nfse_df=None, nfse_results=None):
     """Gera relatório Excel unificado com formatação otimizada"""
     try:
         # Garante que a pasta existe
@@ -649,6 +649,37 @@ def generate_unified_report(cartao_results, pix_results, cartao_stats, recebimen
                 empty_df = pd.DataFrame({'Mensagem': ['Nenhuma transação de cartão encontrada']})
                 safe_to_excel(empty_df, writer, 'Cartão - Detalhes', theme, border_config)
 
+            # Notas Fiscais (NFSe) - se disponível
+            if nfse_df is not None and not nfse_df.empty:
+                safe_to_excel(nfse_df, writer, 'Notas Fiscais (NFSe)', theme, border_config)
+            elif nfse_df is not None:
+                empty_df = pd.DataFrame({'Mensagem': ['Nenhuma nota fiscal encontrada']})
+                safe_to_excel(empty_df, writer, 'Notas Fiscais (NFSe)', theme, border_config)
+            
+            # Auditoria NFSe vs Recebimentos - se disponível
+            if nfse_results is not None and nfse_results:
+                nfse_audit_df = pd.DataFrame(nfse_results)
+                
+                # Define colunas para exibição
+                colunas_nfse = [
+                    'numero_nfse', 'nome_tomador', 'valor_nfse', 'data_nfse',
+                    'valor_recebimento', 'diferenca', 'dif_percentual', 'status',
+                    'os_correspondente', 'observacao'
+                ]
+                nfse_audit_df = nfse_audit_df[[c for c in colunas_nfse if c in nfse_audit_df.columns]]
+                
+                safe_to_excel(nfse_audit_df, writer, 'NFSe vs Recebimentos', theme, border_config)
+                
+                # Divergências NFSe
+                divergencias_nfse = [r for r in nfse_results if r['status'] in ['NÃO ENCONTRADA', 'MÚLTIPLAS CORRESPONDÊNCIAS']]
+                if divergencias_nfse:
+                    divergencias_nfse_df = pd.DataFrame(divergencias_nfse)
+                    divergencias_nfse_df = divergencias_nfse_df[[c for c in colunas_nfse if c in divergencias_nfse_df.columns]]
+                    safe_to_excel(divergencias_nfse_df, writer, 'NFSe - Divergências', theme, border_config)
+                else:
+                    empty_df = pd.DataFrame({'Mensagem': ['Nenhuma divergência encontrada']})
+                    safe_to_excel(empty_df, writer, 'NFSe - Divergências', theme, border_config)
+
             # Auditoria PIX - Detalhes (NÃO agrupado)
             # Carrega novamente as transações PIX do banco para garantir granularidade
             banco_pix_df = pd.read_csv(banco_pix_csv, encoding='utf-8')
@@ -678,6 +709,12 @@ def generate_unified_report(cartao_results, pix_results, cartao_stats, recebimen
             
             # Normaliza as datas para comparação
             recebimentos_df['DATA_PGTO_NORM'] = pd.to_datetime(recebimentos_df['DATA PGTO']).dt.strftime('%d/%m/%Y')
+            
+            # Calcula valor líquido (MÃO DE OBRA + DESCONTO) para cada recebimento
+            if 'VALOR MÃO DE OBRA' in recebimentos_df.columns and 'DESCONTO' in recebimentos_df.columns:
+                recebimentos_df['VALOR_LIQUIDO'] = recebimentos_df['VALOR MÃO DE OBRA'] + recebimentos_df['DESCONTO']
+            else:
+                recebimentos_df['VALOR_LIQUIDO'] = recebimentos_df.get('VALOR MÃO DE OBRA', 0)
             
             # Primeiro, tenta correspondência individual (transação por transação)
             for idx, row in pix_banco_df.iterrows():
@@ -763,6 +800,16 @@ def generate_unified_report(cartao_results, pix_results, cartao_stats, recebimen
             correspondencias_encontradas = len(pix_banco_df[pix_banco_df['status_correspondencia'].isin(['CORRESPONDÊNCIA ENCONTRADA', 'CORRESPONDÊNCIA MÚLTIPLA'])])
             sem_correspondencia = len(pix_banco_df[pix_banco_df['status_correspondencia'] == 'SEM CORRESPONDÊNCIA'])
             
+            # Calcula estatísticas NFSe (se disponível)
+            nfse_stats = {}
+            if nfse_results is not None and nfse_results:
+                nfse_stats = {
+                    'total_nfse': len(nfse_results),
+                    'nfse_coincidentes': len([r for r in nfse_results if r['status'] == 'COINCIDENTE']),
+                    'nfse_nao_encontradas': len([r for r in nfse_results if r['status'] == 'NÃO ENCONTRADA']),
+                    'nfse_multiplas': len([r for r in nfse_results if r['status'] == 'MÚLTIPLAS CORRESPONDÊNCIAS'])
+                }
+            
             # Atualiza o resumo com as estatísticas corretas
             metricas = [
                 '=== AUDITORIA DE CARTÃO ===',
@@ -781,8 +828,16 @@ def generate_unified_report(cartao_results, pix_results, cartao_stats, recebimen
                 'Sem Correspondência',
                 'Taxa de Correspondência (%)',
                 '',
+                '=== AUDITORIA NFSe vs RECEBIMENTOS ===',
+                'Total Notas Fiscais',
+                'NFSe Coincidentes',
+                'NFSe Não Encontradas',
+                'NFSe Múltiplas Correspondências',
+                'Taxa de Sucesso NFSe (%)',
+                '',
                 'Data da Auditoria'
             ]
+            
             valores = [
                 '',
                 cartao_stats['total_transacoes'],
@@ -799,6 +854,13 @@ def generate_unified_report(cartao_results, pix_results, cartao_stats, recebimen
                 correspondencias_encontradas,  # Correspondências baseadas na correspondência individual
                 sem_correspondencia,  # Sem correspondência baseada na correspondência individual
                 f"{(correspondencias_encontradas / len(pix_banco_df)) * 100:.2f}%" if len(pix_banco_df) > 0 else "0%",
+                '',
+                '',
+                nfse_stats.get('total_nfse', 0),
+                nfse_stats.get('nfse_coincidentes', 0),
+                nfse_stats.get('nfse_nao_encontradas', 0),
+                nfse_stats.get('nfse_multiplas', 0),
+                f"{(nfse_stats.get('nfse_coincidentes', 0) / nfse_stats.get('total_nfse', 1)) * 100:.2f}%" if nfse_stats.get('total_nfse', 0) > 0 else "0%",
                 '',
                 datetime.now().strftime('%d/%m/%Y %H:%M:%S')
             ]
@@ -978,7 +1040,141 @@ def apply_worksheet_formatting(worksheet, df, theme, border_config):
     optimize_column_widths(worksheet, df)
 
 
-def executar_auditoria(cartao_csv: str, banco_csv: str, recebimentos_excel: str, output_file: str = None):
+def audit_nfse_vs_recebimentos(nfse_df: pd.DataFrame, recebimentos_df: pd.DataFrame) -> List[Dict]:
+    """
+    Audita a comparação entre notas fiscais e valores de mão de obra dos recebimentos
+    
+    Args:
+        nfse_df: DataFrame com dados das notas fiscais
+        recebimentos_df: DataFrame com dados dos recebimentos
+        
+    Returns:
+        List[Dict]: Lista com resultados da auditoria
+    """
+    logger = logging.getLogger(__name__)
+    logger.info("Iniciando auditoria NFSe vs Recebimentos...")
+    
+    results = []
+    
+    try:
+        # Normaliza colunas dos recebimentos
+        recebimentos_df = recebimentos_df.copy()
+        
+        # Converte DATA PGTO para string para comparação
+        if 'DATA PGTO' in recebimentos_df.columns:
+            recebimentos_df['DATA_PGTO_STR'] = pd.to_datetime(recebimentos_df['DATA PGTO']).dt.strftime('%d/%m/%Y')
+        
+        # Calcula valor líquido (MÃO DE OBRA + DESCONTO) para cada recebimento
+        if 'VALOR MÃO DE OBRA' in recebimentos_df.columns and 'DESCONTO' in recebimentos_df.columns:
+            recebimentos_df['VALOR_LIQUIDO'] = recebimentos_df['VALOR MÃO DE OBRA'] + recebimentos_df['DESCONTO']
+        else:
+            recebimentos_df['VALOR_LIQUIDO'] = recebimentos_df.get('VALOR MÃO DE OBRA', 0)
+        
+        # Processa cada nota fiscal
+        for _, nfse_row in nfse_df.iterrows():
+            numero_nfse = nfse_row.get('numero_nfse')
+            nome_tomador = nfse_row.get('nome_tomador')
+            valor_nfse = nfse_row.get('valor_total')
+            data_nfse = nfse_row.get('data_emissao')
+            
+            if not all([numero_nfse, valor_nfse, data_nfse]):
+                continue
+            
+            # Converte valor da NFSe para float (já deve estar como float, mas garante)
+            try:
+                if isinstance(valor_nfse, (int, float)):
+                    valor_nfse_float = float(valor_nfse)
+                else:
+                    valor_nfse_float = float(str(valor_nfse).replace('R$', '').replace('.', '').replace(',', '.').strip())
+            except (ValueError, AttributeError):
+                valor_nfse_float = 0
+            
+            # Procura correspondência nos recebimentos
+            matching_recebimentos = []
+            
+            # Busca por valor líquido (comparação exata com round(2)) - sem restrição de data
+            if 'VALOR_LIQUIDO' in recebimentos_df.columns:
+                matching_recebimentos = recebimentos_df[
+                    recebimentos_df['VALOR_LIQUIDO'].round(2) == round(valor_nfse_float, 2)
+                ]
+            
+            # Determina status da auditoria
+            if len(matching_recebimentos) == 1:
+                # Correspondência exata encontrada
+                recebimento = matching_recebimentos.iloc[0]
+                valor_recebimento = recebimento['VALOR_LIQUIDO'] if 'VALOR_LIQUIDO' in recebimento.index else 0
+                mao_obra = recebimento['VALOR MÃO DE OBRA'] if 'VALOR MÃO DE OBRA' in recebimento.index else 0
+                desconto = recebimento['DESCONTO'] if 'DESCONTO' in recebimento.index else 0
+                data_recebimento = recebimento['DATA_PGTO_STR'] if 'DATA_PGTO_STR' in recebimento.index else 'N/A'
+                diferenca = valor_nfse_float - valor_recebimento
+                status = 'COINCIDENTE'
+                os_correspondente = recebimento['N° OS'] if 'N° OS' in recebimento.index else 'N/A'
+                
+            elif len(matching_recebimentos) > 1:
+                # Múltiplas correspondências
+                recebimento = matching_recebimentos.iloc[0]  # Pega o primeiro
+                valor_recebimento = recebimento['VALOR_LIQUIDO'] if 'VALOR_LIQUIDO' in recebimento.index else 0
+                mao_obra = recebimento['VALOR MÃO DE OBRA'] if 'VALOR MÃO DE OBRA' in recebimento.index else 0
+                desconto = recebimento['DESCONTO'] if 'DESCONTO' in recebimento.index else 0
+                data_recebimento = recebimento['DATA_PGTO_STR'] if 'DATA_PGTO_STR' in recebimento.index else 'N/A'
+                diferenca = valor_nfse_float - valor_recebimento
+                status = 'MÚLTIPLAS CORRESPONDÊNCIAS'
+                os_list = []
+                for r in matching_recebimentos.head(3).itertuples():
+                    os_list.append(str(getattr(r, 'N° OS', 'N/A')))
+                os_correspondente = f"Múltiplas OS: {', '.join(os_list)}"
+                
+            else:
+                # Nenhuma correspondência encontrada
+                valor_recebimento = 0
+                mao_obra = 0
+                desconto = 0
+                data_recebimento = 'N/A'
+                diferenca = valor_nfse_float
+                status = 'NÃO ENCONTRADA'
+                os_correspondente = 'N/A'
+            
+            # Calcula diferença percentual
+            dif_percentual = (diferenca / valor_nfse_float * 100) if valor_nfse_float > 0 else 0
+            
+            # Cria resultado da auditoria
+            result = {
+                'numero_nfse': numero_nfse,
+                'nome_tomador': nome_tomador,
+                'valor_nfse': valor_nfse_float,
+                'data_nfse': data_nfse,
+                'valor_mao_obra': mao_obra,
+                'desconto': desconto,
+                'valor_liquido': valor_recebimento,
+                'data_recebimento': data_recebimento,
+                'diferenca': diferenca,
+                'dif_percentual': dif_percentual,
+                'status': status,
+                'os_correspondente': os_correspondente,
+                'observacao': f"NFSe {numero_nfse} - {nome_tomador}"
+            }
+            
+            results.append(result)
+        
+        logger.info(f"Auditoria NFSe vs Recebimentos concluída: {len(results)} registros processados")
+        
+        # Estatísticas
+        coincidentes = len([r for r in results if r['status'] == 'COINCIDENTE'])
+        nao_encontradas = len([r for r in results if r['status'] == 'NÃO ENCONTRADA'])
+        multiplas = len([r for r in results if r['status'] == 'MÚLTIPLAS CORRESPONDÊNCIAS'])
+        
+        logger.info(f"  Coincidentes: {coincidentes}")
+        logger.info(f"  Não encontradas: {nao_encontradas}")
+        logger.info(f"  Múltiplas correspondências: {multiplas}")
+        
+        return results
+        
+    except Exception as e:
+        logger.error(f"Erro na auditoria NFSe vs Recebimentos: {e}")
+        return []
+
+
+def executar_auditoria(cartao_csv: str, banco_csv: str, recebimentos_excel: str, nfse_directory: str = None, output_file: str = None):
     """
     Executa a auditoria unificada com os arquivos especificados
     
@@ -986,6 +1182,7 @@ def executar_auditoria(cartao_csv: str, banco_csv: str, recebimentos_excel: str,
         cartao_csv: Caminho para o arquivo CSV de transações de cartão
         banco_csv: Caminho para o arquivo CSV de transações PIX do banco
         recebimentos_excel: Caminho para o arquivo Excel de recebimentos
+        nfse_directory: Caminho para a pasta das notas fiscais (NFSe) - opcional
         output_file: Caminho para o arquivo de saída (opcional)
     """
     logger = setup_logging()
@@ -1007,10 +1204,17 @@ def executar_auditoria(cartao_csv: str, banco_csv: str, recebimentos_excel: str,
         if not os.path.exists(recebimentos_excel):
             raise FileNotFoundError(f"Arquivo Excel de recebimentos não encontrado: {recebimentos_excel}")
         
+        # Verifica se a pasta das notas fiscais existe (se fornecida)
+        if nfse_directory and not os.path.exists(nfse_directory):
+            logger.warning(f"Pasta das notas fiscais não encontrada: {nfse_directory}")
+            nfse_directory = None
+        
         logger.info("Carregando dados...")
         logger.info(f"📄 Cartão: {os.path.basename(cartao_csv)}")
         logger.info(f"🏦 Banco: {os.path.basename(banco_csv)}")
         logger.info(f"📊 Recebimentos: {os.path.basename(recebimentos_excel)}")
+        if nfse_directory:
+            logger.info(f"📋 Notas Fiscais: {os.path.basename(nfse_directory)}")
         
         # Carrega dados de cartão
         cartao_df = parse_cartao_csv(cartao_csv)
@@ -1027,6 +1231,19 @@ def executar_auditoria(cartao_csv: str, banco_csv: str, recebimentos_excel: str,
         # Carrega dados PIX
         banco_transactions = load_banco_pix_csv(banco_csv)
         recebimentos_transactions = load_recebimentos_excel(recebimentos_excel)
+        
+        # Carrega dados das notas fiscais (se pasta fornecida)
+        nfse_df = None
+        if nfse_directory:
+            try:
+                logger.info("Carregando dados das notas fiscais...")
+                from extrator_nfse import NFSeExtractor
+                extrator = NFSeExtractor()
+                nfse_df = extrator.process_directory(nfse_directory)
+                logger.info(f"Notas fiscais carregadas: {len(nfse_df)} registros")
+            except Exception as e:
+                logger.warning(f"Erro ao carregar notas fiscais: {e}")
+                nfse_df = None
         
         logger.info("Executando auditorias...")
         
@@ -1046,10 +1263,16 @@ def executar_auditoria(cartao_csv: str, banco_csv: str, recebimentos_excel: str,
         # Executa auditoria PIX
         pix_results = audit_pix_transactions(banco_transactions, recebimentos_transactions)
         
+        # Executa auditoria NFSe vs Recebimentos (se dados disponíveis)
+        nfse_results = None
+        if nfse_df is not None and not nfse_df.empty:
+            logger.info("Executando auditoria NFSe vs Recebimentos...")
+            nfse_results = audit_nfse_vs_recebimentos(nfse_df, generated_df)
+        
         logger.info("Gerando relatório unificado...")
         
         # Gera relatório unificado
-        generate_unified_report(cartao_results, pix_results, cartao_stats, recebimentos_transactions, banco_transactions, output_file, banco_csv)
+        generate_unified_report(cartao_results, pix_results, cartao_stats, recebimentos_transactions, banco_transactions, output_file, banco_csv, nfse_df, nfse_results)
         
         logger.info(f"✅ Auditoria unificada concluída!")
         logger.info(f"📊 Relatório salvo em: {output_file}")
@@ -1059,6 +1282,11 @@ def executar_auditoria(cartao_csv: str, banco_csv: str, recebimentos_excel: str,
         logger.info(f"Cartão - Total: {cartao_stats['total_transacoes']}, Coincidentes: {cartao_stats['valores_coincidentes']}")
         logger.info(f"PIX - Banco: {len(banco_transactions)}, Recebimentos: {len(recebimentos_transactions)}")
         logger.info(f"PIX - Correspondências: {len([r for r in pix_results if r['status'] == 'CORRESPONDÊNCIA ENCONTRADA'])}")
+        if nfse_df is not None:
+            logger.info(f"NFSe - Total: {len(nfse_df)} notas fiscais")
+        if nfse_results is not None and nfse_results:
+            logger.info(f"NFSe vs Recebimentos - Coincidentes: {len([r for r in nfse_results if r['status'] == 'COINCIDENTE'])}")
+            logger.info(f"NFSe vs Recebimentos - Não encontradas: {len([r for r in nfse_results if r['status'] == 'NÃO ENCONTRADA'])}")
         
         return output_file
         
@@ -1148,10 +1376,16 @@ def main():
         # Executa auditoria PIX
         pix_results = audit_pix_transactions(banco_transactions, recebimentos_transactions)
         
+        # Executa auditoria NFSe vs Recebimentos (se dados disponíveis)
+        nfse_results = None
+        if nfse_df is not None and not nfse_df.empty:
+            logger.info("Executando auditoria NFSe vs Recebimentos...")
+            nfse_results = audit_nfse_vs_recebimentos(nfse_df, generated_df)
+        
         logger.info("Gerando relatório unificado...")
         
         # Gera relatório unificado
-        generate_unified_report(cartao_results, pix_results, cartao_stats, recebimentos_transactions, banco_transactions, report_file, banco_csv)
+        generate_unified_report(cartao_results, pix_results, cartao_stats, recebimentos_transactions, banco_transactions, report_file, banco_csv, nfse_df, nfse_results)
         
         logger.info(f"✅ Auditoria unificada concluída!")
         logger.info(f"📊 Relatório salvo em: {report_file}")
@@ -1161,6 +1395,11 @@ def main():
         logger.info(f"Cartão - Total: {cartao_stats['total_transacoes']}, Coincidentes: {cartao_stats['valores_coincidentes']}")
         logger.info(f"PIX - Banco: {len(banco_transactions)}, Recebimentos: {len(recebimentos_transactions)}")
         logger.info(f"PIX - Correspondências: {len([r for r in pix_results if r['status'] == 'CORRESPONDÊNCIA ENCONTRADA'])}")
+        if nfse_df is not None:
+            logger.info(f"NFSe - Total: {len(nfse_df)} notas fiscais")
+        if nfse_results is not None and nfse_results:
+            logger.info(f"NFSe vs Recebimentos - Coincidentes: {len([r for r in nfse_results if r['status'] == 'COINCIDENTE'])}")
+            logger.info(f"NFSe vs Recebimentos - Não encontradas: {len([r for r in nfse_results if r['status'] == 'NÃO ENCONTRADA'])}")
         
         # Mostra mensagem de sucesso na interface gráfica se disponível
         try:
