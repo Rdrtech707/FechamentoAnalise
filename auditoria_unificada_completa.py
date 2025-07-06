@@ -601,9 +601,7 @@ def group_recebimentos_by_date(transactions: List[PixTransaction]) -> List[Group
     return grouped_transactions
 
 
-def generate_unified_report(cartao_results: List[Dict], pix_results: List[Dict], 
-                           cartao_stats: Dict, recebimentos_transactions: List[PixTransaction],
-                           banco_transactions: List[PixTransaction], output_file: str):
+def generate_unified_report(cartao_results, pix_results, cartao_stats, recebimentos_transactions, banco_transactions, output_file, banco_pix_csv):
     """Gera relatório Excel unificado com formatação otimizada"""
     try:
         # Garante que a pasta existe
@@ -653,7 +651,6 @@ def generate_unified_report(cartao_results: List[Dict], pix_results: List[Dict],
 
             # Auditoria PIX - Detalhes (NÃO agrupado)
             # Carrega novamente as transações PIX do banco para garantir granularidade
-            banco_pix_csv = "data/extratos/NU_636868111_01JUN2025_27JUN2025.csv"
             banco_pix_df = pd.read_csv(banco_pix_csv, encoding='utf-8')
             # Filtra apenas recebidas pelo Pix ou Transferência Recebida
             pix_banco_df = banco_pix_df[
@@ -1052,7 +1049,7 @@ def executar_auditoria(cartao_csv: str, banco_csv: str, recebimentos_excel: str,
         logger.info("Gerando relatório unificado...")
         
         # Gera relatório unificado
-        generate_unified_report(cartao_results, pix_results, cartao_stats, recebimentos_transactions, banco_transactions, output_file)
+        generate_unified_report(cartao_results, pix_results, cartao_stats, recebimentos_transactions, banco_transactions, output_file, banco_csv)
         
         logger.info(f"✅ Auditoria unificada concluída!")
         logger.info(f"📊 Relatório salvo em: {output_file}")
@@ -1154,7 +1151,7 @@ def main():
         logger.info("Gerando relatório unificado...")
         
         # Gera relatório unificado
-        generate_unified_report(cartao_results, pix_results, cartao_stats, recebimentos_transactions, banco_transactions, report_file)
+        generate_unified_report(cartao_results, pix_results, cartao_stats, recebimentos_transactions, banco_transactions, report_file, banco_csv)
         
         logger.info(f"✅ Auditoria unificada concluída!")
         logger.info(f"📊 Relatório salvo em: {report_file}")
