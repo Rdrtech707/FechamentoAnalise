@@ -9,6 +9,7 @@ from tkinter import ttk, filedialog, messagebox, scrolledtext
 import os
 import sys
 import threading
+import json
 from datetime import datetime
 import pandas as pd
 
@@ -20,6 +21,9 @@ class AuditoriaGUI:
         self.root.geometry("700x700")
         self.root.resizable(True, True)
         
+        # Arquivo de cache para salvar configurações
+        self.cache_file = "auditoria_cache.json"
+        
         # Variáveis para armazenar caminhos dos arquivos
         self.cartao_csv = tk.StringVar()
         self.banco_csv = tk.StringVar()
@@ -27,14 +31,81 @@ class AuditoriaGUI:
         self.nfse_directory = tk.StringVar()
         self.output_dir = tk.StringVar()
         
-        # Configurações padrão
-        self.cartao_csv.set("data/extratos/report_20250628_194465.csv")
-        self.banco_csv.set("data/extratos/NU_636868111_01JUN2025_27JUN2025.csv")
-        self.recebimentos_excel.set("data/recebimentos/Recebimentos_2025-06.xlsx")
-        self.nfse_directory.set("data/06-JUN")
-        self.output_dir.set("data/relatorios")
+        # Carrega configurações salvas ou usa padrões
+        self.load_config()
         
         self.setup_ui()
+        
+        # Log inicial sobre configurações
+        if os.path.exists(self.cache_file):
+            self.log_message("✅ Configurações carregadas do cache")
+        else:
+            self.log_message("📝 Usando configurações padrão")
+    
+    def load_config(self):
+        """Carrega configurações do cache"""
+        default_config = {
+            "cartao_csv": "data/extratos/report_20250628_194465.csv",
+            "banco_csv": "data/extratos/NU_636868111_01JUN2025_27JUN2025.csv",
+            "recebimentos_excel": "data/recebimentos/Recebimentos_2025-06.xlsx",
+            "nfse_directory": "data/06-JUN",
+            "output_dir": "data/relatorios",
+            "open_report": True
+        }
+        
+        try:
+            if os.path.exists(self.cache_file):
+                with open(self.cache_file, 'r', encoding='utf-8') as f:
+                    saved_config = json.load(f)
+                    
+                # Mescla configurações salvas com padrões
+                config = default_config.copy()
+                config.update(saved_config)
+                
+                # Define valores nas variáveis
+                self.cartao_csv.set(config.get("cartao_csv", default_config["cartao_csv"]))
+                self.banco_csv.set(config.get("banco_csv", default_config["banco_csv"]))
+                self.recebimentos_excel.set(config.get("recebimentos_excel", default_config["recebimentos_excel"]))
+                self.nfse_directory.set(config.get("nfse_directory", default_config["nfse_directory"]))
+                self.output_dir.set(config.get("output_dir", default_config["output_dir"]))
+                self.open_report_default = config.get("open_report", True)
+            else:
+                # Usa configurações padrão
+                self.cartao_csv.set(default_config["cartao_csv"])
+                self.banco_csv.set(default_config["banco_csv"])
+                self.recebimentos_excel.set(default_config["recebimentos_excel"])
+                self.nfse_directory.set(default_config["nfse_directory"])
+                self.output_dir.set(default_config["output_dir"])
+                self.open_report_default = default_config["open_report"]
+                
+        except Exception as e:
+            print(f"Erro ao carregar configurações: {e}")
+            # Usa configurações padrão em caso de erro
+            self.cartao_csv.set(default_config["cartao_csv"])
+            self.banco_csv.set(default_config["banco_csv"])
+            self.recebimentos_excel.set(default_config["recebimentos_excel"])
+            self.nfse_directory.set(default_config["nfse_directory"])
+            self.output_dir.set(default_config["output_dir"])
+            self.open_report_default = default_config["open_report"]
+    
+    def save_config(self):
+        """Salva configurações no cache"""
+        try:
+            config = {
+                "cartao_csv": self.cartao_csv.get(),
+                "banco_csv": self.banco_csv.get(),
+                "recebimentos_excel": self.recebimentos_excel.get(),
+                "nfse_directory": self.nfse_directory.get(),
+                "output_dir": self.output_dir.get(),
+                "open_report": self.open_report_var.get(),
+                "last_updated": datetime.now().isoformat()
+            }
+            
+            with open(self.cache_file, 'w', encoding='utf-8') as f:
+                json.dump(config, f, indent=2, ensure_ascii=False)
+                
+        except Exception as e:
+            print(f"Erro ao salvar configurações: {e}")
     
     def setup_ui(self):
         """Configura a interface do usuário"""
@@ -88,10 +159,18 @@ class AuditoriaGUI:
         options_frame = ttk.LabelFrame(main_frame, text="⚙️ Opções", padding="15")
         options_frame.pack(fill=tk.X, pady=10)
         
+        # Frame para opções em linha
+        options_inline_frame = ttk.Frame(options_frame)
+        options_inline_frame.pack(fill=tk.X)
+        
         # Checkbox para abrir relatório após conclusão
-        self.open_report_var = tk.BooleanVar(value=True)
-        ttk.Checkbutton(options_frame, text="Abrir relatório após conclusão", 
-                       variable=self.open_report_var).pack(anchor=tk.W)
+        self.open_report_var = tk.BooleanVar(value=self.open_report_default)
+        ttk.Checkbutton(options_inline_frame, text="Abrir relatório após conclusão", 
+                       variable=self.open_report_var).pack(side=tk.LEFT, anchor=tk.W)
+        
+        # Botão para salvar configurações atuais
+        ttk.Button(options_inline_frame, text="💾 Salvar Configurações", 
+                  command=self.save_config).pack(side=tk.RIGHT, padx=5)
         
         # Botões principais (ANTES da seção de status)
         button_frame = ttk.Frame(main_frame)
@@ -113,6 +192,10 @@ class AuditoriaGUI:
         self.clear_button = ttk.Button(button_frame, text="🧹 Limpar Log", 
                   command=self.clear_log)
         self.clear_button.pack(side=tk.RIGHT, padx=5)
+        
+        self.reset_config_button = ttk.Button(button_frame, text="🔄 Reset Config", 
+                  command=self.reset_config)
+        self.reset_config_button.pack(side=tk.RIGHT, padx=5)
         
         # Seção de status
         status_frame = ttk.LabelFrame(main_frame, text="📊 Status", padding="15")
@@ -171,6 +254,30 @@ class AuditoriaGUI:
         self.log_text.delete(1.0, tk.END)
         self.log_text.config(state=tk.DISABLED)
     
+    def reset_config(self):
+        """Reseta configurações para os valores padrão"""
+        if messagebox.askyesno("Reset Configurações", 
+                              "Deseja resetar todas as configurações para os valores padrão?\n\n"
+                              "Isso irá apagar o arquivo de cache e usar os caminhos padrão."):
+            try:
+                # Remove arquivo de cache
+                if os.path.exists(self.cache_file):
+                    os.remove(self.cache_file)
+                    self.log_message("Arquivo de cache removido")
+                
+                # Recarrega configurações padrão
+                self.load_config()
+                
+                # Atualiza checkbox
+                self.open_report_var.set(True)
+                
+                self.log_message("Configurações resetadas para valores padrão")
+                messagebox.showinfo("Sucesso", "Configurações resetadas com sucesso!")
+                
+            except Exception as e:
+                self.log_message(f"Erro ao resetar configurações: {e}")
+                messagebox.showerror("Erro", f"Erro ao resetar configurações:\n{e}")
+    
     def validate_files(self):
         """Valida se os arquivos existem"""
         files_to_check = [
@@ -204,6 +311,7 @@ class AuditoriaGUI:
             # Desabilita botões durante execução
             self.audit_button.config(state="disabled")
             self.clear_button.config(state="disabled")
+            self.reset_config_button.config(state="disabled")
             self.cancel_button.config(state="disabled")
             
             # Limpa log
@@ -239,6 +347,10 @@ class AuditoriaGUI:
             
             self.log_message(f"Auditoria concluída! Arquivo salvo: {output_file}")
             
+            # Salva configurações automaticamente após sucesso
+            self.save_config()
+            self.log_message("Configurações salvas automaticamente")
+            
             # Pergunta se deseja abrir o arquivo
             if messagebox.askyesno("Sucesso", "Auditoria concluída! Deseja abrir o arquivo?"):
                 self.open_file(output_file)
@@ -250,6 +362,7 @@ class AuditoriaGUI:
             # Reabilita botões
             self.audit_button.config(state="normal")
             self.clear_button.config(state="normal")
+            self.reset_config_button.config(state="normal")
             self.cancel_button.config(state="normal")
     
     def run(self):

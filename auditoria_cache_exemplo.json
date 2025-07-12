@@ -1,0 +1,9 @@
+{
+  "cartao_csv": "data/extratos/report_20250628_194465.csv",
+  "banco_csv": "data/extratos/NU_636868111_01JUN2025_27JUN2025.csv",
+  "recebimentos_excel": "data/recebimentos/Recebimentos_2025-06.xlsx",
+  "nfse_directory": "data/06-JUN",
+  "output_dir": "data/relatorios",
+  "open_report": true,
+  "last_updated": "2025-01-27T10:30:00"
+} 
