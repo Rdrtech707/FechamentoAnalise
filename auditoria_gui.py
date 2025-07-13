@@ -12,6 +12,7 @@ import threading
 import json
 from datetime import datetime
 import pandas as pd
+import csv
 
 
 class AuditoriaGUI:
@@ -137,10 +138,10 @@ class AuditoriaGUI:
         ttk.Entry(input_frame, textvariable=self.banco_csv, width=50).grid(row=1, column=1, padx=5, pady=2)
         ttk.Button(input_frame, text="Selecionar", command=lambda: self.select_file(self.banco_csv, [("CSV files", "*.csv")])).grid(row=1, column=2, pady=2)
         
-        # Excel de recebimentos
-        ttk.Label(input_frame, text="Recebimentos (Excel ou JSON):").grid(row=2, column=0, sticky="w", pady=2)
+        # Recebimentos (apenas JSON)
+        ttk.Label(input_frame, text="Recebimentos (JSON):").grid(row=2, column=0, sticky="w", pady=2)
         ttk.Entry(input_frame, textvariable=self.recebimentos_excel, width=50).grid(row=2, column=1, padx=5, pady=2)
-        ttk.Button(input_frame, text="Selecionar", command=lambda: self.select_file(self.recebimentos_excel, [("Excel/JSON files", "*.xlsx *.xls *.json"), ("Todos arquivos", "*.*")])).grid(row=2, column=2, pady=2)
+        ttk.Button(input_frame, text="Selecionar", command=lambda: self.select_file(self.recebimentos_excel, [("Arquivos JSON", "*.json")])).grid(row=2, column=2, pady=2)
         
         # Pasta das Notas Fiscais (NFSe)
         ttk.Label(input_frame, text="Pasta das Notas Fiscais (NFSe):").grid(row=3, column=0, sticky="w", pady=2)
@@ -310,6 +311,87 @@ class AuditoriaGUI:
         
         return True
     
+    def convert_banco_csv_to_json(self, csv_path):
+        """Converte o extrato bancário CSV para JSON estruturado e salva em data/json/banco/"""
+        import os, json
+        from datetime import datetime
+        output_dir = "data/json/banco"
+        os.makedirs(output_dir, exist_ok=True)
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        output_file = os.path.join(output_dir, f"banco_{timestamp}.json")
+        try:
+            with open(csv_path, encoding='utf-8') as f:
+                reader = csv.DictReader(f)
+                rows = list(reader)
+            
+            # Filtra apenas transações PIX e campos necessários
+            filtered_rows = []
+            for row in rows:
+                descricao = str(row.get('Descrição', '')).strip()
+                
+                # Filtra apenas transferências recebidas pelo PIX
+                if (('Transferência recebida' in descricao and 'Pix' in descricao) or 
+                    'Transferência Recebida' in descricao):
+                    
+                    # Extrai remetente da descrição para verificar se é 707 MOTORSPORT LTDA
+                    remetente = self.extract_remetente_from_description(descricao)
+                    if remetente and remetente.strip().upper() == '707 MOTORSPORT LTDA':
+                        continue  # Ignora esse remetente
+                    
+                    filtered_row = {
+                        'Data': row.get('Data', ''),
+                        'Valor': row.get('Valor', ''),
+                        'Descrição': descricao
+                    }
+                    filtered_rows.append(filtered_row)
+            
+            with open(output_file, 'w', encoding='utf-8') as f:
+                json.dump(filtered_rows, f, ensure_ascii=False, indent=2)
+            self.log_message(f"[OK] Extrato do banco convertido para JSON: {output_file}")
+            self.log_message(f"[INFO] Filtradas {len(filtered_rows)} transações PIX (ignorando 707 MOTORSPORT LTDA)")
+        except Exception as e:
+            self.log_message(f"[ERRO] Falha ao converter extrato do banco para JSON: {e}")
+        return output_file
+    
+    def extract_remetente_from_description(self, descricao: str):
+        """Extrai o nome do remetente da descrição da transação PIX"""
+        import re
+        try:
+            # Padrões específicos baseados no formato real do CSV
+            patterns = [
+                # Padrão: "Transferência recebida pelo Pix - NOME - CPF/CNPJ - BANCO"
+                r'Transferência recebida pelo Pix\s*-\s*([^-]+?)\s*-\s*[•\d\./-]+\s*-',
+                # Padrão: "Transferência Recebida - NOME - CPF/CNPJ - BANCO"
+                r'Transferência Recebida\s*-\s*([^-]+?)\s*-\s*[•\d\./-]+\s*-',
+            ]
+            
+            for pattern in patterns:
+                match = re.search(pattern, descricao, re.IGNORECASE)
+                if match:
+                    remetente = match.group(1).strip()
+                    # Remove caracteres especiais e normaliza
+                    remetente = re.sub(r'[^\w\s]', '', remetente).strip()
+                    # Remove espaços extras
+                    remetente = re.sub(r'\s+', ' ', remetente)
+                    if len(remetente) > 2:  # Nome deve ter pelo menos 3 caracteres
+                        return remetente
+            
+            # Se não encontrou com os padrões específicos, tenta extrair o nome antes do primeiro CPF/CNPJ
+            if '•••' in descricao or re.search(r'\d{3}\.\d{3}\.\d{3}', descricao):
+                # Procura por texto antes do CPF/CNPJ
+                parts = descricao.split(' - ')
+                if len(parts) >= 2:
+                    # Pega a segunda parte (após "Transferência recebida pelo Pix")
+                    nome_part = parts[1]
+                    # Remove o CPF/CNPJ se presente
+                    nome_clean = re.sub(r'[•\d\./-]+', '', nome_part).strip()
+                    if len(nome_clean) > 2:
+                        return nome_clean
+            
+            return None
+        except:
+            return None
+
     def run_audit(self):
         """Executa a auditoria"""
         try:
@@ -332,12 +414,15 @@ class AuditoriaGUI:
                 os.makedirs(output_dir)
                 self.log_message(f"Pasta criada: {output_dir}")
             
-            # Gera nome do arquivo de saída
+            # Gera nome do arquivo de saída (JSON)
             timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-            output_file = os.path.join(output_dir, f"auditoria_unificada_{timestamp}.xlsx")
+            output_file = os.path.join(output_dir, f"auditoria_unificada_{timestamp}.json")
             
             self.log_message("Iniciando auditoria...")
             
+            # Converte extrato do banco para JSON antes da auditoria
+            self.convert_banco_csv_to_json(self.banco_csv.get())
+
             # Importa e executa auditoria
             import auditoria_unificada_completa
             

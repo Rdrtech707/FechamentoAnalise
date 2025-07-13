@@ -136,6 +136,26 @@ class DataAuditor:
             self.logger.error(error_msg)
             raise AuditError(error_msg)
     
+    def load_json_data(self, json_file_path: str) -> pd.DataFrame:
+        """
+        Carrega dados do arquivo JSON gerado pela aplicação
+        Args:
+            json_file_path: Caminho para o arquivo JSON
+        Returns:
+            pd.DataFrame: Dados carregados do JSON
+        Raises:
+            AuditError: Se houver erro ao carregar o arquivo
+        """
+        try:
+            self.logger.info(f"Carregando dados JSON: {json_file_path}")
+            df = pd.read_json(json_file_path)
+            self.logger.info(f"JSON carregado com sucesso: {len(df)} registros, {len(df.columns)} colunas")
+            return df
+        except Exception as e:
+            error_msg = f"Erro ao carregar arquivo JSON {json_file_path}: {e}"
+            self.logger.error(error_msg)
+            raise AuditError(error_msg)
+    
     def normalize_column_names(self, df: pd.DataFrame) -> pd.DataFrame:
         """
         Normaliza nomes das colunas para facilitar comparação
@@ -336,7 +356,7 @@ class DataAuditor:
         
         Args:
             csv_file_path: Caminho para o arquivo CSV
-            generated_file_path: Caminho para o arquivo Excel gerado
+            generated_file_path: Caminho para o arquivo JSON gerado
             field_mappings: Mapeamento de campos CSV -> Gerado
             key_field: Campo chave para relacionar registros
             
@@ -351,7 +371,7 @@ class DataAuditor:
             
             # Carrega dados
             csv_df = self.load_csv_data(csv_file_path)
-            generated_df = self.load_generated_data(generated_file_path)
+            generated_df = self.load_json_data(generated_file_path)
             
             # Normaliza nomes das colunas
             csv_df = self.normalize_column_names(csv_df)
@@ -446,92 +466,66 @@ class DataAuditor:
             self.logger.error(error_msg)
             raise AuditError(error_msg)
     
-    def generate_audit_report(self, summary: AuditSummary, results: List[AuditResult], 
-                            output_file: str) -> None:
+    def generate_audit_report(self, summary: AuditSummary, results: List[AuditResult], output_file: str) -> None:
         """
-        Gera relatório detalhado da auditoria
-        
+        Gera relatório detalhado da auditoria em JSON
         Args:
             summary: Resumo da auditoria
             results: Resultados detalhados
-            output_file: Arquivo de saída para o relatório
+            output_file: Arquivo de saída para o relatório (deve terminar com .json)
         """
         try:
-            self.logger.info(f"Gerando relatório de auditoria: {output_file}")
-            
-            # Cria relatório em Excel
-            with pd.ExcelWriter(output_file, engine='openpyxl') as writer:
-                # Resumo
-                summary_data = {
-                    'Métrica': [
-                        'Total de Registros',
-                        'Registros Coincidentes',
-                        'Registros Divergentes',
-                        'Total de Campos Verificados',
-                        'Campos Coincidentes',
-                        'Campos Divergentes',
-                        'Taxa de Sucesso (Registros)',
-                        'Taxa de Sucesso (Campos)',
-                        'Data da Auditoria',
-                        'Arquivo CSV',
-                        'Arquivo Gerado',
-                        'Tolerância (%)'
-                    ],
-                    'Valor': [
-                        summary.total_records,
-                        summary.matching_records,
-                        summary.mismatched_records,
-                        summary.total_fields_checked,
-                        summary.matching_fields,
-                        summary.mismatched_fields,
-                        f"{(summary.matching_records/summary.total_records)*100:.2f}%" if summary.total_records > 0 else "0%",
-                        f"{(summary.matching_fields/summary.total_fields_checked)*100:.2f}%" if summary.total_fields_checked > 0 else "0%",
-                        summary.audit_date.strftime('%d/%m/%Y %H:%M:%S'),
-                        summary.csv_file,
-                        summary.generated_file,
-                        f"{summary.tolerance_percentage*100:.2f}%"
-                    ]
-                }
-                
-                summary_df = pd.DataFrame(summary_data)
-                summary_df.to_excel(writer, sheet_name='Resumo', index=False)
-                
-                # Detalhes
-                details_data = []
-                for result in results:
-                    details_data.append({
-                        'Campo': result.field_name,
-                        'Valor CSV': result.csv_value,
-                        'Valor Gerado': result.generated_value,
-                        'Coincide': 'Sim' if result.is_match else 'Não',
-                        'Diferença': result.difference,
-                        'Diferença (%)': result.percentage_diff,
-                        'Observações': result.notes
-                    })
-                
-                details_df = pd.DataFrame(details_data)
-                details_df.to_excel(writer, sheet_name='Detalhes', index=False)
-                
-                # Campos com divergências
-                divergences = [r for r in results if not r.is_match]
-                if divergences:
-                    divergence_data = []
-                    for result in divergences:
-                        divergence_data.append({
-                            'Campo': result.field_name,
-                            'Valor CSV': result.csv_value,
-                            'Valor Gerado': result.generated_value,
-                            'Diferença': result.difference,
-                            'Diferença (%)': result.percentage_diff,
-                            'Observações': result.notes
-                        })
-                    
-                    divergence_df = pd.DataFrame(divergence_data)
-                    divergence_df.to_excel(writer, sheet_name='Divergências', index=False)
-            
+            self.logger.info(f"Gerando relatório de auditoria (JSON): {output_file}")
+            report = {
+                "resumo": {
+                    "total_registros": summary.total_records,
+                    "registros_coincidentes": summary.matching_records,
+                    "registros_divergentes": summary.mismatched_records,
+                    "total_campos_verificados": summary.total_fields_checked,
+                    "campos_coincidentes": summary.matching_fields,
+                    "campos_divergentes": summary.mismatched_fields,
+                    "taxa_sucesso_registros": f"{(summary.matching_records/summary.total_records)*100:.2f}%" if summary.total_records > 0 else "0%",
+                    "taxa_sucesso_campos": f"{(summary.matching_fields/summary.total_fields_checked)*100:.2f}%" if summary.total_fields_checked > 0 else "0%",
+                    "data_auditoria": summary.audit_date.strftime('%d/%m/%Y %H:%M:%S'),
+                    "arquivo_csv": summary.csv_file,
+                    "arquivo_gerado": summary.generated_file,
+                    "tolerancia_percentual": f"{summary.tolerance_percentage*100:.2f}%"
+                },
+                "resultados": [
+                    {
+                        "campo": r.field_name,
+                        "valor_csv": r.csv_value,
+                        "valor_gerado": r.generated_value,
+                        "coincide": r.is_match,
+                        "diferenca": r.difference,
+                        "diferenca_percentual": r.percentage_diff,
+                        "observacoes": r.notes
+                    } for r in results
+                ]
+            }
+            import json
+            with open(output_file, 'w', encoding='utf-8') as f:
+                json.dump(report, f, ensure_ascii=False, indent=2)
             self.logger.info(f"Relatório gerado com sucesso: {output_file}")
-            
         except Exception as e:
             error_msg = f"Erro ao gerar relatório: {e}"
             self.logger.error(error_msg)
             raise AuditError(error_msg) 
+
+def csv_to_json_padronizado(csv_path: str, json_path: str, columns: list = None, encoding: str = 'utf-8'):
+    """
+    Converte um arquivo CSV para JSON padronizado para uso na auditoria.
+    Args:
+        csv_path: Caminho do arquivo CSV de entrada
+        json_path: Caminho do arquivo JSON de saída
+        columns: Lista de colunas a manter/renomear (opcional)
+        encoding: Encoding do CSV (default: utf-8)
+    """
+    import pandas as pd
+    import json
+    df = pd.read_csv(csv_path, encoding=encoding)
+    if columns:
+        # Renomeia e filtra colunas se necessário
+        df = df.rename(columns={c: c for c in columns if c in df.columns})
+        df = df[[c for c in columns if c in df.columns]]
+    df.to_json(json_path, orient='records', force_ascii=False, indent=2) 

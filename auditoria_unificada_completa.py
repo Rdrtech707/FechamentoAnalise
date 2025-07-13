@@ -19,6 +19,8 @@ from style_config import (
     COLUMN_WIDTHS, BORDER_CONFIGS, THEMES, 
     CURRENCY_FORMATS, DATE_FORMATS, CONTABEIS_COLS
 )
+import json
+import unicodedata
 
 
 @dataclass
@@ -205,111 +207,53 @@ def parse_cartao_csv(csv_file_path: str) -> pd.DataFrame:
         raise AuditError(error_msg)
 
 
-def load_banco_pix_csv(csv_path: str) -> List[PixTransaction]:
-    """Carrega transações PIX do CSV do banco, ignorando 707 MOTORSPORT LTDA"""
+def load_banco_pix_json(json_path: str) -> List[PixTransaction]:
+    """Carrega transações PIX do JSON do banco (já filtrado na conversão)"""
     logger = logging.getLogger(__name__)
-    logger.info(f"Carregando CSV do banco: {csv_path}")
+    logger.info(f"Carregando JSON do banco: {json_path}")
     
     try:
-        df = pd.read_csv(csv_path, encoding='utf-8')
+        with open(json_path, 'r', encoding='utf-8') as f:
+            data = json.load(f)
+        
         transactions = []
         
-        for _, row in df.iterrows():
-            descricao = str(row['Descrição']).strip()
-            
-            # Filtra transferências recebidas pelo PIX ou Transferência Recebida
-            if (('Transferência recebida' in descricao and 'Pix' in descricao) or 
-                'Transferência Recebida' in descricao):
+        for row in data:
+            try:
+                valor = float(str(row.get('Valor', '0')).replace(',', '.'))
+                data_tx = str(row.get('Data', '')).strip()
+                descricao = str(row.get('Descrição', '')).strip()
+                
+                # Normaliza a data para formato DD/MM/YYYY para comparação
                 try:
-                    valor = float(str(row['Valor']).replace(',', '.'))
-                    data = str(row['Data']).strip()
+                    data_dt = pd.to_datetime(data_tx, dayfirst=True)  # DD/MM/YYYY
+                    data_normalizada = data_dt.strftime('%d/%m/%Y')
+                except Exception:
+                    data_normalizada = data_tx
                     
-                    # Extrai informações do remetente da descrição
-                    remetente = extract_remetente_from_description(descricao)
-                    if remetente and remetente.strip().upper() == '707 MOTORSPORT LTDA':
-                        continue  # Ignora esse remetente
-                    chave_pix = extract_chave_pix_from_description(descricao)
-                    
-                    transaction = PixTransaction(
-                        data=data,
-                        valor=valor,
-                        descricao=descricao,
-                        origem='banco',
-                        identificador=None,  # Não usa o identificador do banco
-                        remetente=remetente,
-                        chave_pix=chave_pix
-                    )
-                    transactions.append(transaction)
-                    
-                except (ValueError, KeyError) as e:
-                    logger.warning(f"Erro ao processar linha do banco: {e}")
-                    continue
-        logger.info(f"Carregadas {len(transactions)} transações PIX do banco (ignorando 707 MOTORSPORT LTDA)")
+                remetente = extract_remetente_from_description(descricao)
+                chave_pix = extract_chave_pix_from_description(descricao)
+                
+                transaction = PixTransaction(
+                    data=data_normalizada,
+                    valor=valor,
+                    descricao=descricao,
+                    origem='banco',
+                    identificador=None,
+                    remetente=remetente,
+                    chave_pix=chave_pix
+                )
+                transactions.append(transaction)
+                
+            except (ValueError, KeyError) as e:
+                logger.warning(f"Erro ao processar linha do banco: {e}")
+                continue
+        logger.info(f"Carregadas {len(transactions)} transações PIX do banco JSON")
         return transactions
         
     except Exception as e:
-        logger.error(f"Erro ao carregar CSV do banco: {e}")
+        logger.error(f"Erro ao carregar JSON do banco: {e}")
         return []
-
-
-def extract_remetente_from_description(descricao: str) -> Optional[str]:
-    """Extrai o nome do remetente da descrição da transação PIX"""
-    try:
-        # Padrões específicos baseados no formato real do CSV
-        patterns = [
-            # Padrão: "Transferência recebida pelo Pix - NOME - CPF/CNPJ - BANCO"
-            r'Transferência recebida pelo Pix\s*-\s*([^-]+?)\s*-\s*[•\d\./-]+\s*-',
-            # Padrão: "Transferência Recebida - NOME - CPF/CNPJ - BANCO"
-            r'Transferência Recebida\s*-\s*([^-]+?)\s*-\s*[•\d\./-]+\s*-',
-        ]
-        
-        for pattern in patterns:
-            match = re.search(pattern, descricao, re.IGNORECASE)
-            if match:
-                remetente = match.group(1).strip()
-                # Remove caracteres especiais e normaliza
-                remetente = re.sub(r'[^\w\s]', '', remetente).strip()
-                # Remove espaços extras
-                remetente = re.sub(r'\s+', ' ', remetente)
-                if len(remetente) > 2:  # Nome deve ter pelo menos 3 caracteres
-                    return remetente
-        
-        # Se não encontrou com os padrões específicos, tenta extrair o nome antes do primeiro CPF/CNPJ
-        if '•••' in descricao or re.search(r'\d{3}\.\d{3}\.\d{3}', descricao):
-            # Procura por texto antes do CPF/CNPJ
-            parts = descricao.split(' - ')
-            if len(parts) >= 2:
-                # Pega a segunda parte (após "Transferência recebida pelo Pix")
-                nome_part = parts[1]
-                # Remove o CPF/CNPJ se presente
-                nome_clean = re.sub(r'[•\d\./-]+', '', nome_part).strip()
-                if len(nome_clean) > 2:
-                    return nome_clean
-        
-        return None
-    except:
-        return None
-
-
-def extract_chave_pix_from_description(descricao: str) -> Optional[str]:
-    """Extrai a chave PIX da descrição da transação"""
-    try:
-        # Padrões para CPF, CNPJ, email, telefone
-        patterns = [
-            r'(\d{3}\.\d{3}\.\d{3}-\d{2})',  # CPF
-            r'(\d{2}\.\d{3}\.\d{3}/\d{4}-\d{2})',  # CNPJ
-            r'([a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,})',  # Email
-            r'(\+55\s?\d{2}\s?\d{4,5}\s?\d{4})',  # Telefone
-        ]
-        
-        for pattern in patterns:
-            match = re.search(pattern, descricao)
-            if match:
-                return match.group(1)
-        
-        return None
-    except:
-        return None
 
 
 def load_recebimentos_json(json_path: str) -> List[PixTransaction]:
@@ -328,8 +272,20 @@ def load_recebimentos_json(json_path: str) -> List[PixTransaction]:
                 if pd.notna(valor_pix) and float(valor_pix) > 0:
                     data_pgto = str(row.get('DATA PGTO', '')).strip()
                     if data_pgto and data_pgto != 'nan':
+                        # Normaliza a data para formato DD/MM/YYYY para comparação
+                        try:
+                            # Converte para datetime e depois para string no formato desejado
+                            if 'T' in data_pgto:  # Formato ISO
+                                data_dt = pd.to_datetime(data_pgto)
+                            else:  # Outros formatos
+                                data_dt = pd.to_datetime(data_pgto, format='mixed')
+                            data_normalizada = data_dt.strftime('%d/%m/%Y')
+                        except:
+                            # Se falhar a conversão, mantém o formato original
+                            data_normalizada = data_pgto
+                        
                         transaction = PixTransaction(
-                            data=data_pgto,
+                            data=data_normalizada,
                             valor=float(valor_pix),
                             descricao=f"Recebimento PIX - OS: {row.get('N° OS', 'N/A')}",
                             origem='recebimentos',
@@ -460,74 +416,340 @@ def audit_cartao_transactions(cartao_df: pd.DataFrame, generated_df: pd.DataFram
     return results
 
 
-def audit_pix_transactions(banco_transactions: List[PixTransaction], 
-                          recebimentos_transactions: List[PixTransaction]) -> List[Dict]:
-    """Executa auditoria de transações PIX com agrupamento por remetente"""
+def normalize_remetente(rem):
+    if not rem:
+        return ''
+    rem = rem.lower().strip()
+    rem = ''.join(c for c in unicodedata.normalize('NFD', rem) if unicodedata.category(c) != 'Mn')
+    return rem
+
+def audit_pix_transactions(banco_transactions: List[PixTransaction], recebimentos_transactions: List[PixTransaction], tolerancia_valor=0.01, tolerancia_dias=2) -> List[Dict]:
+    """
+    Auditoria PIX: para cada transação do banco, procura nos recebimentos uma transação com:
+    - Data: tolerância de 2 dias (configurável)
+    - Valor: tolerância de centavos (configurável)
+    - Se não encontrar correspondência individual, agrupa transações do mesmo remetente na mesma data e tenta com valor somado
+    - Para valores exatamente iguais, tenta com tolerância maior de datas (15 dias) se não encontrar com 2 dias
+    Cada transação só pode ser usada uma vez.
+    
+    Args:
+        banco_transactions: Lista de transações do banco
+        recebimentos_transactions: Lista de transações dos recebimentos
+        tolerancia_valor: Tolerância para valores (padrão: 0.01 centavos)
+        tolerancia_dias: Tolerância para datas em dias (padrão: 2 dias)
+    """
     logger = logging.getLogger(__name__)
-    
-    # Agrupa transações do banco por remetente e data
-    logger.info("Agrupando transações PIX do banco por remetente...")
-    banco_grouped = group_pix_transactions_by_remetente(banco_transactions)
-    
-    # Agrupa transações dos recebimentos por data (não há remetente)
-    logger.info("Agrupando transações PIX dos recebimentos por data...")
-    recebimentos_grouped = group_recebimentos_by_date(recebimentos_transactions)
-    
     results = []
+    usados_receb = set()
+    usados_banco = set()
     
-    for banco_group in banco_grouped:
-        # Procura correspondência nos recebimentos agrupados
-        encontrado = False
+    # Primeira passada: tenta correspondências individuais
+    for idx_banco, banco_tx in enumerate(banco_transactions):
+        if idx_banco in usados_banco:
+            continue
+            
+        match_idx = None
+        tolerancia_dias_usada = tolerancia_dias
         
-        for rec_group in recebimentos_grouped:
-            # Compara por valor total (com tolerância de 1%)
-            if abs(banco_group.valor_total - rec_group.valor_total) <= (banco_group.valor_total * 0.01):
-                encontrado = True
+        # Primeira tentativa: tolerância normal (2 dias)
+        for idx_rec, rec_tx in enumerate(recebimentos_transactions):
+            if idx_rec in usados_receb:
+                continue
+            
+            # Compara data com tolerância de dias
+            try:
+                # Converte datas para datetime para comparação
+                data_banco = pd.to_datetime(banco_tx.data, format='%d/%m/%Y')
+                data_receb = pd.to_datetime(rec_tx.data, format='%d/%m/%Y')
                 
-                # Cria detalhes das transações individuais
-                detalhes_banco = []
-                for tx in banco_group.transacoes_originais:
-                    detalhes_banco.append(f"R$ {tx.valor:,.2f} - {tx.remetente or 'N/A'}")
+                # Calcula diferença em dias
+                diff_dias = abs((data_banco - data_receb).days)
                 
-                detalhes_recebimentos = []
-                for tx in rec_group.transacoes_originais:
-                    detalhes_recebimentos.append(f"R$ {tx.valor:,.2f} - OS: {tx.referencia}")
-                
-                results.append({
-                    'data_banco': banco_group.data,
-                    'valor_banco': banco_group.valor_total,
-                    'remetente_banco': banco_group.remetente,
-                    'qtd_transacoes_banco': banco_group.quantidade_transacoes,
-                    'detalhes_banco': ' | '.join(detalhes_banco),
-                    'data_recebimentos': rec_group.data,
-                    'valor_recebimentos': rec_group.valor_total,
-                    'qtd_transacoes_recebimentos': rec_group.quantidade_transacoes,
-                    'detalhes_recebimentos': ' | '.join(detalhes_recebimentos),
-                    'status': 'CORRESPONDÊNCIA ENCONTRADA',
-                    'tipo_agrupamento': 'Múltiplas transações' if banco_group.quantidade_transacoes > 1 else 'Transação única',
-                    'observacao': f'Valor total R$ {banco_group.valor_total:,.2f} corresponde ao total dos recebimentos'
-                })
+                # Verifica se está dentro da tolerância de dias
+                if diff_dias > tolerancia_dias:
+                    continue
+            except:
+                # Se falhar a conversão de data, mantém comparação exata
+                if banco_tx.data != rec_tx.data:
+                    continue
+            
+            # Compara valor (com tolerância de centavos)
+            if abs(banco_tx.valor - rec_tx.valor) <= tolerancia_valor:
+                match_idx = idx_rec
                 break
         
-        if not encontrado:
-            # Cria detalhes das transações individuais
-            detalhes_banco = []
-            for tx in banco_group.transacoes_originais:
-                detalhes_banco.append(f"R$ {tx.valor:,.2f} - {tx.remetente or 'N/A'}")
+        # Segunda tentativa: se não encontrou, tenta com tolerância maior (15 dias) para valores exatamente iguais
+        if match_idx is None:
+            tolerancia_dias_usada = 15
+            for idx_rec, rec_tx in enumerate(recebimentos_transactions):
+                if idx_rec in usados_receb:
+                    continue
+                
+                # Compara data com tolerância maior
+                try:
+                    data_banco = pd.to_datetime(banco_tx.data, format='%d/%m/%Y')
+                    data_receb = pd.to_datetime(rec_tx.data, format='%d/%m/%Y')
+                    diff_dias = abs((data_banco - data_receb).days)
+                    
+                    if diff_dias > tolerancia_dias_usada:
+                        continue
+                except:
+                    if banco_tx.data != rec_tx.data:
+                        continue
+                
+                # Compara valor (deve ser exatamente igual)
+                if banco_tx.valor == rec_tx.valor:
+                    match_idx = idx_rec
+                    break
+        
+        if match_idx is not None:
+            usados_receb.add(match_idx)
+            usados_banco.add(idx_banco)
+            rec_tx = recebimentos_transactions[match_idx]
+            
+            # Calcula diferença de dias para a observação
+            try:
+                data_banco_dt = pd.to_datetime(banco_tx.data, format='%d/%m/%Y')
+                data_receb_dt = pd.to_datetime(rec_tx.data, format='%d/%m/%Y')
+                diff_dias = abs((data_banco_dt - data_receb_dt).days)
+                obs_dias = f" (diferença de {diff_dias} dia{'s' if diff_dias != 1 else ''})" if diff_dias > 0 else ""
+                data_banco_normalizada = data_banco_dt.strftime('%d/%m/%Y')
+            except:
+                obs_dias = ""
+                data_banco_normalizada = banco_tx.data
+            
+            # Determina o status baseado na tolerância usada
+            if tolerancia_dias_usada > tolerancia_dias:
+                status = 'CORRESPONDÊNCIA ENCONTRADA (TOLERÂNCIA ESTENDIDA)'
+                obs_tolerancia = f" - tolerância estendida para {tolerancia_dias_usada} dias"
+            else:
+                status = 'CORRESPONDÊNCIA ENCONTRADA'
+                obs_tolerancia = ""
             
             results.append({
-                'data_banco': banco_group.data,
-                'valor_banco': banco_group.valor_total,
-                'remetente_banco': banco_group.remetente,
-                'qtd_transacoes_banco': banco_group.quantidade_transacoes,
-                'detalhes_banco': ' | '.join(detalhes_banco),
+                'data_banco': data_banco_normalizada,
+                'valor_banco': banco_tx.valor,
+                'remetente_banco': banco_tx.remetente,
+                'detalhes_banco': banco_tx.descricao,
+                'data_recebimentos': rec_tx.data,
+                'valor_recebimentos': rec_tx.valor,
+                'detalhes_recebimentos': f'R$ {rec_tx.valor:,.2f} - OS: {getattr(rec_tx, "referencia", "N/A")}',
+                'os_recebimentos': getattr(rec_tx, 'referencia', 'N/A'),
+                'status': status,
+                'observacao': f'Valor R$ {banco_tx.valor:,.2f} encontrado em recebimento OS: {getattr(rec_tx, "referencia", "N/A")}{obs_dias}{obs_tolerancia}'
+            })
+    
+    # Segunda passada: agrupa transações não usadas do mesmo remetente na mesma data
+    # Agrupa transações do banco por remetente e data
+    grupos_banco = {}
+    for idx_banco, banco_tx in enumerate(banco_transactions):
+        if idx_banco in usados_banco:
+            continue
+            
+        chave = (banco_tx.remetente, banco_tx.data)
+        if chave not in grupos_banco:
+            grupos_banco[chave] = []
+        grupos_banco[chave].append((idx_banco, banco_tx))
+    
+    # Para cada grupo, tenta encontrar correspondência com valor somado
+    for (remetente, data), transacoes in grupos_banco.items():
+        if len(transacoes) == 1:
+            # Transação única - não marca como "SEM CORRESPONDÊNCIA" aqui, deixa para a terceira passada tentar
+            continue
+        else:
+            # Múltiplas transações - soma os valores e procura correspondência
+            valor_total = sum(tx.valor for _, tx in transacoes)
+            indices_banco = [idx for idx, _ in transacoes]
+            
+            # Procura correspondência com valor somado
+            match_idx = None
+            for idx_rec, rec_tx in enumerate(recebimentos_transactions):
+                if idx_rec in usados_receb:
+                    continue
+                
+                # Compara data com tolerância de dias
+                try:
+                    data_banco = pd.to_datetime(data, format='%d/%m/%Y')
+                    data_receb = pd.to_datetime(rec_tx.data, format='%d/%m/%Y')
+                    diff_dias = abs((data_banco - data_receb).days)
+                    if diff_dias > tolerancia_dias:
+                        continue
+                except:
+                    if data != rec_tx.data:
+                        continue
+                
+                # Compara valor somado
+                if abs(valor_total - rec_tx.valor) <= tolerancia_valor:
+                    match_idx = idx_rec
+                    break
+            
+            if match_idx is not None:
+                # Correspondência encontrada com valor somado
+                usados_receb.add(match_idx)
+                usados_banco.update(indices_banco)
+                rec_tx = recebimentos_transactions[match_idx]
+                
+                # Calcula diferença de dias
+                try:
+                    data_banco_dt = pd.to_datetime(data, format='%d/%m/%Y')
+                    data_receb_dt = pd.to_datetime(rec_tx.data, format='%d/%m/%Y')
+                    diff_dias = abs((data_banco_dt - data_receb_dt).days)
+                    obs_dias = f" (diferença de {diff_dias} dia{'s' if diff_dias != 1 else ''})" if diff_dias > 0 else ""
+                    data_banco_normalizada = data_banco_dt.strftime('%d/%m/%Y')
+                except:
+                    obs_dias = ""
+                    data_banco_normalizada = data
+                
+                # Cria detalhes das transações agrupadas
+                detalhes_transacoes = []
+                for _, tx in transacoes:
+                    detalhes_transacoes.append(f"R$ {tx.valor:,.2f}")
+                detalhes_str = " + ".join(detalhes_transacoes)
+                
+                results.append({
+                    'data_banco': data_banco_normalizada,
+                    'valor_banco': valor_total,
+                    'remetente_banco': remetente,
+                    'detalhes_banco': f"Múltiplas transações: {detalhes_str}",
+                    'data_recebimentos': rec_tx.data,
+                    'valor_recebimentos': rec_tx.valor,
+                    'detalhes_recebimentos': f'R$ {rec_tx.valor:,.2f} - OS: {getattr(rec_tx, "referencia", "N/A")}',
+                    'os_recebimentos': getattr(rec_tx, 'referencia', 'N/A'),
+                    'status': 'CORRESPONDÊNCIA ENCONTRADA (VALOR SOMADO)',
+                    'observacao': f'Valor total R$ {valor_total:,.2f} ({detalhes_str}) encontrado em recebimento OS: {getattr(rec_tx, "referencia", "N/A")}{obs_dias}'
+                })
+            else:
+                # Não encontrou correspondência - marca cada transação individualmente
+                for idx_banco, banco_tx in transacoes:
+                    results.append({
+                        'data_banco': banco_tx.data,
+                        'valor_banco': banco_tx.valor,
+                        'remetente_banco': banco_tx.remetente,
+                        'detalhes_banco': banco_tx.descricao,
+                        'data_recebimentos': None,
+                        'valor_recebimentos': None,
+                        'detalhes_recebimentos': None,
+                        'os_recebimentos': None,
+                        'status': 'SEM CORRESPONDÊNCIA',
+                        'observacao': f'Sem correspondência individual ou somada PIX de {remetente}'
+                    })
+    
+    # Terceira passada: agrupa recebimentos não usados do mesmo dia e tenta encontrar correspondência com valor somado
+    recebimentos_nao_usados = []
+    for idx_rec, rec_tx in enumerate(recebimentos_transactions):
+        if idx_rec not in usados_receb:
+            recebimentos_nao_usados.append((idx_rec, rec_tx))
+    
+    # Agrupa recebimentos não usados por data
+    grupos_recebimentos = {}
+    for idx_rec, rec_tx in recebimentos_nao_usados:
+        data = rec_tx.data
+        if data not in grupos_recebimentos:
+            grupos_recebimentos[data] = []
+        grupos_recebimentos[data].append((idx_rec, rec_tx))
+    
+    # Para cada grupo de recebimentos, tenta encontrar correspondência com valor somado
+    for data, transacoes in grupos_recebimentos.items():
+        if len(transacoes) == 1:
+            # Recebimento único - marca como não encontrado
+            idx_rec, rec_tx = transacoes[0]
+            results.append({
+                'data_banco': None,
+                'valor_banco': None,
+                'remetente_banco': None,
+                'detalhes_banco': None,
+                'data_recebimentos': rec_tx.data,
+                'valor_recebimentos': rec_tx.valor,
+                'detalhes_recebimentos': f'R$ {rec_tx.valor:,.2f} - OS: {getattr(rec_tx, "referencia", "N/A")}',
+                'os_recebimentos': getattr(rec_tx, 'referencia', 'N/A'),
+                'status': 'SEM CORRESPONDÊNCIA',
+                'observacao': f'Recebimento sem correspondência no banco'
+            })
+        else:
+            # Múltiplos recebimentos - soma os valores e procura correspondência
+            valor_total = sum(tx.valor for _, tx in transacoes)
+            indices_receb = [idx for idx, _ in transacoes]
+            # Procura correspondência com valor somado (usando tolerância baixa)
+            match_idx = None
+            for idx_banco, banco_tx in enumerate(banco_transactions):
+                if idx_banco in usados_banco:
+                    continue
+                # Compara data com tolerância baixa
+                try:
+                    data_banco = pd.to_datetime(banco_tx.data, format='%d/%m/%Y')
+                    data_receb = pd.to_datetime(data, format='%d/%m/%Y')
+                    diff_dias = abs((data_banco - data_receb).days)
+                    if diff_dias > tolerancia_dias:  # Usa tolerância baixa (2 dias)
+                        continue
+                except:
+                    if banco_tx.data != data:
+                        continue
+                # Compara valor somado
+                if abs(valor_total - banco_tx.valor) <= tolerancia_valor:
+                    match_idx = idx_banco
+                    break
+            if match_idx is not None:
+                # Correspondência encontrada com valor somado
+                usados_banco.add(match_idx)
+                usados_receb.update(indices_receb)
+                banco_tx = banco_transactions[match_idx]
+                # Calcula diferença de dias
+                try:
+                    data_banco_dt = pd.to_datetime(banco_tx.data, format='%d/%m/%Y')
+                    data_receb_dt = pd.to_datetime(data, format='%d/%m/%Y')
+                    diff_dias = abs((data_banco_dt - data_receb_dt).days)
+                    obs_dias = f" (diferença de {diff_dias} dia{'s' if diff_dias != 1 else ''})" if diff_dias > 0 else ""
+                    data_banco_normalizada = data_banco_dt.strftime('%d/%m/%Y')
+                except:
+                    obs_dias = ""
+                    data_banco_normalizada = banco_tx.data
+                # Cria detalhes dos recebimentos agrupados
+                detalhes_recebimentos = []
+                for _, tx in transacoes:
+                    detalhes_recebimentos.append(f"OS: {getattr(tx, 'referencia', 'N/A')} (R$ {tx.valor:,.2f})")
+                detalhes_str = " + ".join(detalhes_recebimentos)
+                results.append({
+                    'data_banco': data_banco_normalizada,
+                    'valor_banco': banco_tx.valor,
+                    'remetente_banco': banco_tx.remetente,
+                    'detalhes_banco': banco_tx.descricao,
+                    'data_recebimentos': data,
+                    'valor_recebimentos': valor_total,
+                    'detalhes_recebimentos': f'R$ {valor_total:,.2f} - {detalhes_str}',
+                    'os_recebimentos': " + ".join([getattr(tx, 'referencia', 'N/A') for _, tx in transacoes]),
+                    'status': 'CORRESPONDÊNCIA ENCONTRADA (RECEBIMENTOS SOMADOS)',
+                    'observacao': f'Valor total R$ {valor_total:,.2f} ({detalhes_str}) encontrado em transação PIX de {banco_tx.remetente}{obs_dias}'
+                })
+            else:
+                # Não encontrou correspondência - marca cada recebimento individualmente
+                for idx_rec, rec_tx in transacoes:
+                    results.append({
+                        'data_banco': None,
+                        'valor_banco': None,
+                        'remetente_banco': None,
+                        'detalhes_banco': None,
+                        'data_recebimentos': rec_tx.data,
+                        'valor_recebimentos': rec_tx.valor,
+                        'detalhes_recebimentos': f'R$ {rec_tx.valor:,.2f} - OS: {getattr(rec_tx, "referencia", "N/A")}',
+                        'os_recebimentos': getattr(rec_tx, 'referencia', 'N/A'),
+                        'status': 'SEM CORRESPONDÊNCIA',
+                        'observacao': f'Recebimento sem correspondência individual ou somada no banco'
+                    })
+    
+    # Quarta passada: marca transações do banco não usadas como "SEM CORRESPONDÊNCIA"
+    for idx_banco, banco_tx in enumerate(banco_transactions):
+        if idx_banco not in usados_banco:
+            results.append({
+                'data_banco': banco_tx.data,
+                'valor_banco': banco_tx.valor,
+                'remetente_banco': banco_tx.remetente,
+                'detalhes_banco': banco_tx.descricao,
                 'data_recebimentos': None,
                 'valor_recebimentos': None,
-                'qtd_transacoes_recebimentos': None,
                 'detalhes_recebimentos': None,
+                'os_recebimentos': None,
                 'status': 'SEM CORRESPONDÊNCIA',
-                'tipo_agrupamento': 'Múltiplas transações' if banco_group.quantidade_transacoes > 1 else 'Transação única',
-                'observacao': f'Transações de {banco_group.remetente} sem correspondência nos recebimentos'
+                'observacao': f'Sem correspondência PIX de {banco_tx.remetente}'
             })
     
     return results
@@ -591,331 +813,75 @@ def group_pix_transactions_by_remetente(transactions: List[PixTransaction]) -> L
     return grouped_transactions
 
 
-def group_recebimentos_by_date(transactions: List[PixTransaction]) -> List[GroupedPixTransaction]:
-    """Agrupa transações de recebimentos por data"""
+def group_recebimentos_by_os(transactions: List[PixTransaction]) -> List[GroupedPixTransaction]:
+    """Agrupa transações de recebimentos por OS (referencia)"""
     logger = logging.getLogger(__name__)
-    
-    # Agrupa por data
     grouped_dict = {}
-    
     for tx in transactions:
-        if tx.data not in grouped_dict:
-            grouped_dict[tx.data] = []
-        grouped_dict[tx.data].append(tx)
-    
-    # Cria transações agrupadas
+        group_key = tx.referencia or 'N/A'
+        if group_key not in grouped_dict:
+            grouped_dict[group_key] = []
+        grouped_dict[group_key].append(tx)
     grouped_transactions = []
-    
-    for data, transacoes in grouped_dict.items():
+    for os_num, transacoes in grouped_dict.items():
         if len(transacoes) == 1:
-            # Transação única
             tx = transacoes[0]
             grouped_tx = GroupedPixTransaction(
-                data=data,
+                data=tx.data,
                 valor_total=tx.valor,
                 remetente="Recebimento",
                 origem=tx.origem,
                 transacoes_originais=transacoes,
                 quantidade_transacoes=1,
-                referencia=tx.referencia
+                referencia=os_num
             )
         else:
-            # Múltiplas transações na mesma data
             valor_total = sum(tx.valor for tx in transacoes)
             grouped_tx = GroupedPixTransaction(
-                data=data,
+                data=transacoes[0].data,
                 valor_total=valor_total,
                 remetente="Recebimentos múltiplos",
                 origem=transacoes[0].origem,
                 transacoes_originais=transacoes,
                 quantidade_transacoes=len(transacoes),
-                referencia="Múltiplas OS"
+                referencia=os_num
             )
-            logger.info(f"Agrupados {len(transacoes)} recebimentos em {data} - Total: R$ {valor_total:,.2f}")
-        
         grouped_transactions.append(grouped_tx)
-    
+    logger.info(f"Transações de recebimentos agrupadas por OS: {len(transactions)} -> {len(grouped_transactions)} grupos")
     return grouped_transactions
 
 
-def generate_unified_report(cartao_results, pix_results, cartao_stats, recebimentos_transactions, banco_transactions, output_file, banco_pix_csv, nfse_df=None, nfse_results=None):
-    """Gera relatório Excel unificado com formatação otimizada"""
+def generate_unified_report_json(cartao_results, pix_results, cartao_stats, recebimentos_transactions, banco_transactions, output_file, banco_pix_csv, nfse_df=None, nfse_results=None):
+    """
+    Gera relatório unificado em JSON com resumo e detalhes das auditorias.
+    """
     try:
-        # Garante que a pasta existe
-        pasta = os.path.dirname(output_file)
-        if pasta and not os.path.exists(pasta):
-            os.makedirs(pasta)
-
-        with pd.ExcelWriter(output_file, engine='openpyxl') as writer:
-            # Configurações de estilo
-            theme = THEMES['default']
-            border_config = BORDER_CONFIGS['default']
-            
-            # Auditoria de Cartão - Detalhes
-            if cartao_results:
-                cartao_df = pd.DataFrame(cartao_results)
-                # Calcula diferença percentual apenas para linhas com diferença
-                cartao_df['dif_percentual'] = cartao_df.apply(
-                    lambda row: (row['diferenca'] / row['valor_cartao'] * 100) if row['diferenca'] is not None and row['valor_cartao'] and row['valor_cartao'] > 0 else None, axis=1)
-                
-                # Define colunas para exibição
-                colunas_cartao = [
-                    'identificador', 'data_cartao', 'tipo_pagamento', 'valor_cartao', 'valor_gerado',
-                    'diferenca', 'dif_percentual', 'status', 'os_correspondente', 'observacao'
-                ]
-                cartao_df = cartao_df[[c for c in colunas_cartao if c in cartao_df.columns]]
-                
-                if not cartao_df.empty:
-                    safe_to_excel(cartao_df, writer, 'Cartão - Detalhes', theme, border_config)
-                else:
-                    empty_df = pd.DataFrame({'Mensagem': ['Nenhuma transação de cartão encontrada']})
-                    safe_to_excel(empty_df, writer, 'Cartão - Detalhes', theme, border_config)
-                
-                # Divergências de Cartão
-                divergencias_cartao = [r for r in cartao_results if r['status'] in ['DIVERGENTE', 'NÃO ENCONTRADA', 'VALOR NÃO ENCONTRADO']]
-                if divergencias_cartao:
-                    divergencias_df = pd.DataFrame(divergencias_cartao)
-                    divergencias_df['dif_percentual'] = divergencias_df.apply(
-                        lambda row: (row['diferenca'] / row['valor_cartao'] * 100) if row['diferenca'] is not None and row['valor_cartao'] and row['valor_cartao'] > 0 else None, axis=1)
-                    divergencias_df = divergencias_df[[c for c in colunas_cartao if c in divergencias_df.columns]]
-                    safe_to_excel(divergencias_df, writer, 'Cartão - Divergências', theme, border_config)
-                else:
-                    empty_df = pd.DataFrame({'Mensagem': ['Nenhuma divergência encontrada']})
-                    safe_to_excel(empty_df, writer, 'Cartão - Divergências', theme, border_config)
-            else:
-                empty_df = pd.DataFrame({'Mensagem': ['Nenhuma transação de cartão encontrada']})
-                safe_to_excel(empty_df, writer, 'Cartão - Detalhes', theme, border_config)
-
-            # Notas Fiscais (NFSe) - se disponível
-            if nfse_df is not None and not nfse_df.empty:
-                safe_to_excel(nfse_df, writer, 'Notas Fiscais (NFSe)', theme, border_config)
-            elif nfse_df is not None:
-                empty_df = pd.DataFrame({'Mensagem': ['Nenhuma nota fiscal encontrada']})
-                safe_to_excel(empty_df, writer, 'Notas Fiscais (NFSe)', theme, border_config)
-            
-            # Auditoria NFSe vs Recebimentos - se disponível
-            if nfse_results is not None and nfse_results:
-                nfse_audit_df = pd.DataFrame(nfse_results)
-                
-                # Define colunas para exibição
-                colunas_nfse = [
-                    'numero_nfse', 'nome_tomador', 'valor_nfse', 'data_nfse',
-                    'valor_recebimento', 'diferenca', 'dif_percentual', 'status',
-                    'os_correspondente', 'observacao'
-                ]
-                nfse_audit_df = nfse_audit_df[[c for c in colunas_nfse if c in nfse_audit_df.columns]]
-                
-                safe_to_excel(nfse_audit_df, writer, 'NFSe vs Recebimentos', theme, border_config)
-                
-                # Divergências NFSe
-                divergencias_nfse = [r for r in nfse_results if r['status'] in ['NÃO ENCONTRADA', 'MÚLTIPLAS CORRESPONDÊNCIAS']]
-                if divergencias_nfse:
-                    divergencias_nfse_df = pd.DataFrame(divergencias_nfse)
-                    divergencias_nfse_df = divergencias_nfse_df[[c for c in colunas_nfse if c in divergencias_nfse_df.columns]]
-                    safe_to_excel(divergencias_nfse_df, writer, 'NFSe - Divergências', theme, border_config)
-                else:
-                    empty_df = pd.DataFrame({'Mensagem': ['Nenhuma divergência encontrada']})
-                    safe_to_excel(empty_df, writer, 'NFSe - Divergências', theme, border_config)
-
-            # Auditoria PIX - Detalhes (NÃO agrupado)
-            # Carrega novamente as transações PIX do banco para garantir granularidade
-            banco_pix_df = pd.read_csv(banco_pix_csv, encoding='utf-8')
-            # Filtra apenas recebidas pelo Pix ou Transferência Recebida
-            pix_banco_df = banco_pix_df[
-                (banco_pix_df['Descrição'].str.contains('Transferência recebida', na=False) & 
-                 banco_pix_df['Descrição'].str.contains('Pix', na=False)) |
-                banco_pix_df['Descrição'].str.contains('Transferência Recebida', na=False)
-            ]
-            # Ajusta colunas para exibir principais informações
-            pix_banco_df = pix_banco_df.rename(columns={
-                'Data': 'data',
-                'Valor': 'valor',
-                'Descrição': 'descricao',
-            })
-            # Extrai remetente para exibição
-            pix_banco_df['remetente'] = pix_banco_df['descricao'].apply(extract_remetente_from_description)
-            # Remove 707 MOTORSPORT LTDA
-            pix_banco_df = pix_banco_df[~(pix_banco_df['remetente'].str.strip().str.upper() == '707 MOTORSPORT LTDA')]
-            
-            # Adiciona coluna OS correspondente baseada nos resultados da auditoria
-            pix_banco_df['os_correspondente'] = None
-            pix_banco_df['status_correspondencia'] = 'SEM CORRESPONDÊNCIA'
-            
-            # Carrega os dados de recebimentos para comparação individual
-            recebimentos_df = pd.read_excel("data/recebimentos/Recebimentos_2025-06.xlsx")
-            
-            # Normaliza as datas para comparação
-            recebimentos_df['DATA_PGTO_NORM'] = pd.to_datetime(recebimentos_df['DATA PGTO']).dt.strftime('%d/%m/%Y')
-            
-            # Calcula valor líquido (MÃO DE OBRA + DESCONTO) para cada recebimento
-            if 'VALOR MÃO DE OBRA' in recebimentos_df.columns and 'DESCONTO' in recebimentos_df.columns:
-                recebimentos_df['VALOR_LIQUIDO'] = recebimentos_df['VALOR MÃO DE OBRA'] + recebimentos_df['DESCONTO']
-            else:
-                recebimentos_df['VALOR_LIQUIDO'] = recebimentos_df.get('VALOR MÃO DE OBRA', 0)
-            
-            # Primeiro, tenta correspondência individual (transação por transação)
-            for idx, row in pix_banco_df.iterrows():
-                # Procura correspondência por data e valor com tolerância
-                matching_recebimentos = recebimentos_df[
-                    (recebimentos_df['DATA_PGTO_NORM'] == row['data']) & 
-                    (recebimentos_df['PIX'] > 0) &  # Garante que tem valor PIX
-                    (abs(recebimentos_df['PIX'] - row['valor']) <= (row['valor'] * 0.01))  # 1% tolerância
-                ]
-                
-                if not matching_recebimentos.empty:
-                    # Encontrou correspondência individual
-                    os_numero = matching_recebimentos.iloc[0]['N° OS']
-                    pix_banco_df.at[idx, 'os_correspondente'] = str(os_numero)
-                    pix_banco_df.at[idx, 'status_correspondencia'] = 'CORRESPONDÊNCIA ENCONTRADA'
-            
-            # Segundo, procura por correspondências múltiplas (múltiplas transações para uma OS)
-            # Agrupa transações do banco por data
-            transacoes_por_data = {}
-            for idx, row in pix_banco_df.iterrows():
-                if row['status_correspondencia'] == 'SEM CORRESPONDÊNCIA':  # Só processa as não encontradas
-                    data = row['data']
-                    if data not in transacoes_por_data:
-                        transacoes_por_data[data] = []
-                    transacoes_por_data[data].append({
-                        'idx': idx,
-                        'valor': row['valor'],
-                        'remetente': row['remetente']
-                    })
-            
-            # Para cada data com múltiplas transações não encontradas, procura correspondência por valor total
-            for data, transacoes in transacoes_por_data.items():
-                if len(transacoes) > 1:  # Só processa se há múltiplas transações
-                    valor_total = sum(tx['valor'] for tx in transacoes)
-                    
-                    # Procura recebimentos com valor total correspondente na mesma data
-                    matching_recebimentos = recebimentos_df[
-                        (recebimentos_df['DATA_PGTO_NORM'] == data) & 
-                        (recebimentos_df['PIX'] > 0) &  # Garante que tem valor PIX
-                        (abs(recebimentos_df['PIX'] - valor_total) <= (valor_total * 0.01))  # 1% tolerância
-                    ]
-                    
-                    if not matching_recebimentos.empty:
-                        # Encontrou correspondência múltipla
-                        os_numero = matching_recebimentos.iloc[0]['N° OS']
-                        
-                        # Marca todas as transações com a mesma OS
-                        for tx in transacoes:
-                            pix_banco_df.at[tx['idx'], 'os_correspondente'] = str(os_numero)
-                            pix_banco_df.at[tx['idx'], 'status_correspondencia'] = 'CORRESPONDÊNCIA MÚLTIPLA'
-            
-            # Terceiro, para transações individuais não encontradas, tenta correspondência por valor total
-            # (caso de uma transação que corresponde ao valor total de uma OS)
-            for idx, row in pix_banco_df.iterrows():
-                if row['status_correspondencia'] == 'SEM CORRESPONDÊNCIA':
-                    # Procura recebimentos com valor total correspondente na mesma data
-                    matching_recebimentos = recebimentos_df[
-                        (recebimentos_df['DATA_PGTO_NORM'] == row['data']) & 
-                        (recebimentos_df['PIX'] > 0) &  # Garante que tem valor PIX
-                        (abs(recebimentos_df['PIX'] - row['valor']) <= (row['valor'] * 0.01))  # 1% tolerância
-                    ]
-                    
-                    if not matching_recebimentos.empty:
-                        # Encontrou correspondência por valor total
-                        os_numero = matching_recebimentos.iloc[0]['N° OS']
-                        pix_banco_df.at[idx, 'os_correspondente'] = str(os_numero)
-                        pix_banco_df.at[idx, 'status_correspondencia'] = 'CORRESPONDÊNCIA ENCONTRADA'
-            
-            # Reordena colunas
-            cols = ['data', 'valor', 'remetente', 'os_correspondente', 'status_correspondencia', 'descricao']
-            pix_banco_df = pix_banco_df[cols]
-            safe_to_excel(pix_banco_df, writer, 'PIX - Detalhes', theme, border_config)
-
-            # PIX - Divergências (baseado na correspondência individual)
-            pix_sem_correspondencia = pix_banco_df[pix_banco_df['status_correspondencia'] == 'SEM CORRESPONDÊNCIA']
-            if not pix_sem_correspondencia.empty:
-                safe_to_excel(pix_sem_correspondencia, writer, 'PIX - Divergências', theme, border_config)
-            else:
-                empty_df = pd.DataFrame({'Mensagem': ['Nenhuma transação sem correspondência']})
-                safe_to_excel(empty_df, writer, 'PIX - Divergências', theme, border_config)
-
-            # Calcula estatísticas PIX baseadas na correspondência individual
-            correspondencias_encontradas = len(pix_banco_df[pix_banco_df['status_correspondencia'].isin(['CORRESPONDÊNCIA ENCONTRADA', 'CORRESPONDÊNCIA MÚLTIPLA'])])
-            sem_correspondencia = len(pix_banco_df[pix_banco_df['status_correspondencia'] == 'SEM CORRESPONDÊNCIA'])
-            
-            # Calcula estatísticas NFSe (se disponível)
-            nfse_stats = {}
-            if nfse_results is not None and nfse_results:
-                nfse_stats = {
-                    'total_nfse': len(nfse_results),
-                    'nfse_coincidentes': len([r for r in nfse_results if r['status'] == 'COINCIDENTE']),
-                    'nfse_nao_encontradas': len([r for r in nfse_results if r['status'] == 'NÃO ENCONTRADA']),
-                    'nfse_multiplas': len([r for r in nfse_results if r['status'] == 'MÚLTIPLAS CORRESPONDÊNCIAS'])
-                }
-            
-            # Atualiza o resumo com as estatísticas corretas
-            metricas = [
-                '=== AUDITORIA DE CARTÃO ===',
-                'Total de Transações',
-                'Cartão Encontradas',
-                'PIX Encontradas',
-                'Não Encontradas',
-                'Valores Coincidentes',
-                'Valores Divergentes',
-                'Taxa de Sucesso (%)',
-                '',
-                '=== AUDITORIA PIX ===',
-                'Total Transações Banco',
-                'Total Transações Recebimentos',
-                'Correspondências Encontradas',
-                'Sem Correspondência',
-                'Taxa de Correspondência (%)',
-                '',
-                '=== AUDITORIA NFSe vs RECEBIMENTOS ===',
-                'Total Notas Fiscais',
-                'NFSe Coincidentes',
-                'NFSe Não Encontradas',
-                'NFSe Múltiplas Correspondências',
-                'Taxa de Sucesso NFSe (%)',
-                '',
-                'Data da Auditoria'
-            ]
-            
-            valores = [
-                '',
-                cartao_stats['total_transacoes'],
-                cartao_stats['cartao_encontradas'],
-                cartao_stats['pix_encontradas'],
-                cartao_stats['nao_encontradas'],
-                cartao_stats['valores_coincidentes'],
-                cartao_stats['valores_divergentes'],
-                f"{(cartao_stats['valores_coincidentes'] / cartao_stats['total_transacoes']) * 100:.2f}%" if cartao_stats['total_transacoes'] > 0 else "0%",
-                '',
-                '',
-                len(banco_transactions),  # Total de transações PIX do banco (não agrupadas)
-                len(recebimentos_transactions),  # Total de transações PIX dos recebimentos
-                correspondencias_encontradas,  # Correspondências baseadas na correspondência individual
-                sem_correspondencia,  # Sem correspondência baseada na correspondência individual
-                f"{(correspondencias_encontradas / len(pix_banco_df)) * 100:.2f}%" if len(pix_banco_df) > 0 else "0%",
-                '',
-                '',
-                nfse_stats.get('total_nfse', 0),
-                nfse_stats.get('nfse_coincidentes', 0),
-                nfse_stats.get('nfse_nao_encontradas', 0),
-                nfse_stats.get('nfse_multiplas', 0),
-                f"{(nfse_stats.get('nfse_coincidentes', 0) / nfse_stats.get('total_nfse', 1)) * 100:.2f}%" if nfse_stats.get('total_nfse', 0) > 0 else "0%",
-                '',
-                datetime.now().strftime('%d/%m/%Y %H:%M:%S')
-            ]
-            
-            # Garante que as listas tenham o mesmo tamanho
-            if len(metricas) != len(valores):
-                diff = abs(len(metricas) - len(valores))
-                if len(metricas) > len(valores):
-                    valores += [''] * diff
-                else:
-                    metricas += [''] * diff
-                    
-            summary_data = {'Métrica': metricas, 'Valor': valores}
-            summary_df = pd.DataFrame(summary_data)
-            safe_to_excel(summary_df, writer, 'Resumo Geral', theme, border_config)
-
+        # Resumo executivo
+        resumo = {
+            'cartao': cartao_stats,
+            'pix': {
+                'total_transacoes_banco': len(banco_transactions),
+                'total_transacoes_recebimentos': len(recebimentos_transactions),
+                'correspondencias_encontradas': len([r for r in pix_results if 'CORRESPONDÊNCIA ENCONTRADA' in r['status']]),
+                'sem_correspondencia': len([r for r in pix_results if r['status'] == 'SEM CORRESPONDÊNCIA']),
+            },
+            'nfse': {
+                'total_notas': len(nfse_df) if nfse_df is not None else 0,
+                'total_correspondencias': len([r for r in nfse_results if r['status'] == 'COINCIDENTE']) if nfse_results is not None else 0,
+                'nao_encontradas': len([r for r in nfse_results if r['status'] == 'NÃO ENCONTRADA']) if nfse_results is not None else 0,
+            } if nfse_df is not None and nfse_results is not None else {},
+        }
+        relatorio = {
+            'resumo': resumo,
+            'detalhes_cartao': cartao_results,
+            'detalhes_pix': pix_results,
+            'detalhes_nfse': nfse_results,
+        }
+        with open(output_file, 'w', encoding='utf-8') as f:
+            json.dump(relatorio, f, ensure_ascii=False, indent=2, default=str)
+        print(f"[OK] Relatório unificado gerado em: {output_file}")
     except Exception as e:
-        logging.error(f"Erro ao gerar relatório: {e}")
+        print(f"[ERRO] Erro ao gerar relatório JSON: {e}")
         raise
 
 
@@ -1219,6 +1185,66 @@ def audit_nfse_vs_recebimentos(nfse_df: pd.DataFrame, recebimentos_path: str) ->
         return []
 
 
+def extract_remetente_from_description(descricao: str) -> Optional[str]:
+    """Extrai o nome do remetente da descrição da transação PIX"""
+    try:
+        # Padrões específicos baseados no formato real do CSV
+        patterns = [
+            # Padrão: "Transferência recebida pelo Pix - NOME - CPF/CNPJ - BANCO"
+            r'Transferência recebida pelo Pix\s*-\s*([^-]+?)\s*-\s*[•\d\./-]+\s*-',
+            # Padrão: "Transferência Recebida - NOME - CPF/CNPJ - BANCO"
+            r'Transferência Recebida\s*-\s*([^-]+?)\s*-\s*[•\d\./-]+\s*-',
+        ]
+        
+        for pattern in patterns:
+            match = re.search(pattern, descricao, re.IGNORECASE)
+            if match:
+                remetente = match.group(1).strip()
+                # Remove caracteres especiais e normaliza
+                remetente = re.sub(r'[^\w\s]', '', remetente).strip()
+                # Remove espaços extras
+                remetente = re.sub(r'\s+', ' ', remetente)
+                if len(remetente) > 2:  # Nome deve ter pelo menos 3 caracteres
+                    return remetente
+        
+        # Se não encontrou com os padrões específicos, tenta extrair o nome antes do primeiro CPF/CNPJ
+        if '•••' in descricao or re.search(r'\d{3}\.\d{3}\.\d{3}', descricao):
+            # Procura por texto antes do CPF/CNPJ
+            parts = descricao.split(' - ')
+            if len(parts) >= 2:
+                # Pega a segunda parte (após "Transferência recebida pelo Pix")
+                nome_part = parts[1]
+                # Remove o CPF/CNPJ se presente
+                nome_clean = re.sub(r'[•\d\./-]+', '', nome_part).strip()
+                if len(nome_clean) > 2:
+                    return nome_clean
+        
+        return None
+    except:
+        return None
+
+
+def extract_chave_pix_from_description(descricao: str) -> Optional[str]:
+    """Extrai a chave PIX da descrição da transação"""
+    try:
+        # Padrões para CPF, CNPJ, email, telefone
+        patterns = [
+            r'(\d{3}\.\d{3}\.\d{3}-\d{2})',  # CPF
+            r'(\d{2}\.\d{3}\.\d{3}/\d{4}-\d{2})',  # CNPJ
+            r'([a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,})',  # Email
+            r'(\+55\s?\d{2}\s?\d{4,5}\s?\d{4})',  # Telefone
+        ]
+        
+        for pattern in patterns:
+            match = re.search(pattern, descricao)
+            if match:
+                return match.group(1)
+        
+        return None
+    except:
+        return None
+
+
 def executar_auditoria(cartao_csv: str, banco_csv: str, recebimentos_path: str, nfse_directory: str = None, output_file: str = None):
     """
     Executa a auditoria unificada com os arquivos especificados
@@ -1277,8 +1303,18 @@ def executar_auditoria(cartao_csv: str, banco_csv: str, recebimentos_path: str, 
         if 'DATA PGTO' in generated_df.columns:
             generated_df['DATA PGTO'] = pd.to_datetime(generated_df['DATA PGTO']).dt.date
         
-        # Carrega dados PIX baseado na extensão do arquivo
-        banco_transactions = load_banco_pix_csv(banco_csv)
+        # Carrega dados PIX do JSON do banco (sempre deve existir)
+        banco_json_dir = "data/json/banco"
+        json_files = [f for f in os.listdir(banco_json_dir) if f.startswith('banco_') and f.endswith('.json')]
+        if not json_files:
+            raise Exception("Nenhum JSON do banco encontrado. Execute a conversão primeiro.")
+        
+        # Pega o arquivo mais recente
+        json_files.sort(reverse=True)
+        banco_json_path = os.path.join(banco_json_dir, json_files[0])
+        logger.info(f"Usando JSON do banco: {banco_json_path}")
+        banco_transactions = load_banco_pix_json(banco_json_path)
+        
         if recebimentos_path.lower().endswith('.json'):
             recebimentos_transactions = load_recebimentos_json(recebimentos_path)
         else:
@@ -1324,7 +1360,7 @@ def executar_auditoria(cartao_csv: str, banco_csv: str, recebimentos_path: str, 
         logger.info("Gerando relatório unificado...")
         
         # Gera relatório unificado
-        generate_unified_report(cartao_results, pix_results, cartao_stats, recebimentos_transactions, banco_transactions, output_file, banco_csv, nfse_df, nfse_results)
+        generate_unified_report_json(cartao_results, pix_results, cartao_stats, recebimentos_transactions, banco_transactions, output_file, banco_csv, nfse_df, nfse_results)
         
         logger.info(f"✅ Auditoria unificada concluída!")
         logger.info(f"📊 Relatório salvo em: {output_file}")
@@ -1333,7 +1369,7 @@ def executar_auditoria(cartao_csv: str, banco_csv: str, recebimentos_path: str, 
         logger.info("\n=== RESUMO EXECUTIVO ===")
         logger.info(f"Cartão - Total: {cartao_stats['total_transacoes']}, Coincidentes: {cartao_stats['valores_coincidentes']}")
         logger.info(f"PIX - Banco: {len(banco_transactions)}, Recebimentos: {len(recebimentos_transactions)}")
-        logger.info(f"PIX - Correspondências: {len([r for r in pix_results if r['status'] == 'CORRESPONDÊNCIA ENCONTRADA'])}")
+        logger.info(f"PIX - Correspondências: {len([r for r in pix_results if 'CORRESPONDÊNCIA ENCONTRADA' in r['status']])}")
         if nfse_df is not None:
             logger.info(f"NFSe - Total: {len(nfse_df)} notas fiscais")
         if nfse_results is not None and nfse_results:
@@ -1410,8 +1446,18 @@ def main():
         if 'DATA PGTO' in generated_df.columns:
             generated_df['DATA PGTO'] = pd.to_datetime(generated_df['DATA PGTO']).dt.date
         
-        # Carrega dados PIX baseado na extensão do arquivo
-        banco_transactions = load_banco_pix_csv(banco_csv)
+        # Carrega dados PIX do JSON do banco (sempre deve existir)
+        banco_json_dir = "data/json/banco"
+        json_files = [f for f in os.listdir(banco_json_dir) if f.startswith('banco_') and f.endswith('.json')]
+        if not json_files:
+            raise Exception("Nenhum JSON do banco encontrado. Execute a conversão primeiro.")
+        
+        # Pega o arquivo mais recente
+        json_files.sort(reverse=True)
+        banco_json_path = os.path.join(banco_json_dir, json_files[0])
+        logger.info(f"Usando JSON do banco: {banco_json_path}")
+        banco_transactions = load_banco_pix_json(banco_json_path)
+        
         if recebimentos_path.lower().endswith('.json'):
             recebimentos_transactions = load_recebimentos_json(recebimentos_path)
         else:
@@ -1444,7 +1490,7 @@ def main():
         logger.info("Gerando relatório unificado...")
         
         # Gera relatório unificado
-        generate_unified_report(cartao_results, pix_results, cartao_stats, recebimentos_transactions, banco_transactions, report_file, banco_csv, nfse_df, nfse_results)
+        generate_unified_report_json(cartao_results, pix_results, cartao_stats, recebimentos_transactions, banco_transactions, report_file, banco_csv, nfse_df, nfse_results)
         
         logger.info(f"✅ Auditoria unificada concluída!")
         logger.info(f"📊 Relatório salvo em: {report_file}")
@@ -1453,7 +1499,7 @@ def main():
         logger.info("\n=== RESUMO EXECUTIVO ===")
         logger.info(f"Cartão - Total: {cartao_stats['total_transacoes']}, Coincidentes: {cartao_stats['valores_coincidentes']}")
         logger.info(f"PIX - Banco: {len(banco_transactions)}, Recebimentos: {len(recebimentos_transactions)}")
-        logger.info(f"PIX - Correspondências: {len([r for r in pix_results if r['status'] == 'CORRESPONDÊNCIA ENCONTRADA'])}")
+        logger.info(f"PIX - Correspondências: {len([r for r in pix_results if 'CORRESPONDÊNCIA ENCONTRADA' in r['status']])}")
         if nfse_df is not None:
             logger.info(f"NFSe - Total: {len(nfse_df)} notas fiscais")
         if nfse_results is not None and nfse_results:

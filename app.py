@@ -4,13 +4,12 @@ import sys
 from datetime import datetime
 from config import (
     MDB_FILE, MDB_PASSWORD, OUTPUT_DIR, LOG_LEVEL, LOG_FILE, 
-    FILE_ENCODING, MAX_RECORDS, EXCEL_SETTINGS, FORMATTING,
+    FILE_ENCODING, MAX_RECORDS, FORMATTING,
     ConfigError, get_config_summary
 )
 from modules.access_db import get_connection_context, DatabaseConnectionError, test_connection, get_database_info
 from modules.extractors import extract_all_data, ExtractionError
 from modules.processors import process_recebimentos
-from modules.exporters import export_to_excel
 from modules.export_json import export_to_json
 
 
@@ -180,31 +179,18 @@ def main():
                 df_periodo = valid[valid['MES'] == periodo].drop(columns='MES')
                 logger.info(f"Encontrados {len(df_periodo)} registros para o período {periodo}")
                 
-                # Exporta para Excel
+                # Exporta apenas para JSON
                 try:
-                    export_to_excel(
-                        {periodo: df_periodo}, 
+                    json_path = export_to_json(
+                        df_periodo,
                         output_dir=OUTPUT_DIR,
-                        border_theme='default'  # Pode ser alterado para 'corporate', 'dark', 'minimal'
+                        filename=f"Recebimentos_{periodo}",
+                        logger=logger
                     )
-                    logger.info(f"Arquivo Excel gerado com sucesso em {OUTPUT_DIR}")
-                    print(f"[OK] Arquivo gerado: {OUTPUT_DIR}/Recebimentos_{periodo}.xlsx")
-                    # Exporta também para JSON
-                    try:
-                        json_path = export_to_json(
-                            df_periodo,
-                            output_dir=OUTPUT_DIR,
-                            filename=f"Recebimentos_{periodo}",
-                            logger=logger
-                        )
-                        print(f"[OK] Arquivo JSON gerado: {json_path}")
-                    except Exception as e:
-                        logger.error(f"Erro ao exportar para JSON: {e}")
-                        print(f"[ERRO] Erro ao gerar arquivo JSON: {e}")
+                    print(f"[OK] Arquivo JSON gerado: {json_path}")
                 except Exception as e:
-                    logger.error(f"Erro ao exportar para Excel: {e}")
-                    print(f"[ERRO] Erro ao gerar arquivo Excel: {e}")
-                    return
+                    logger.error(f"Erro ao exportar para JSON: {e}")
+                    print(f"[ERRO] Erro ao gerar arquivo JSON: {e}")
             else:
                 logger.warning(f"Nenhum registro encontrado para o período {periodo}")
                 print(f"[AVISO] Nenhum registro encontrado para o período {periodo}")
