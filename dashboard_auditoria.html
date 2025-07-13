@@ -319,6 +319,7 @@
                     <button class="tab active" onclick="showTab('cartao')">💳 Cartão</button>
                     <button class="tab" onclick="showTab('pix')">🏦 PIX</button>
                     <button class="tab" onclick="showTab('nfse')">📄 NFSe</button>
+                    <button class="tab" onclick="showTab('os_sem_nf')">⚠️ OS Sem NF</button>
                 </div>
 
                 <div id="cartao" class="tab-content active">
@@ -361,6 +362,23 @@
                                     <th>Número NFSe</th>
                                     <th>Tomador</th>
                                     <th>Valor</th>
+                                    <th>Status</th>
+                                </tr>
+                            </thead>
+                            <tbody></tbody>
+                        </table>
+                    </div>
+                </div>
+
+                <div id="os_sem_nf" class="tab-content">
+                    <div class="table-container">
+                        <table id="osSemNfTable">
+                            <thead>
+                                <tr>
+                                    <th>OS</th>
+                                    <th>Cliente</th>
+                                    <th>Valor</th>
+                                    <th>Data</th>
                                     <th>Status</th>
                                 </tr>
                             </thead>
@@ -487,6 +505,11 @@
                         <div class="value">${resumo.nfse.nao_encontradas || 0}</div>
                         <div class="subtitle">Não encontradas</div>
                     </div>
+                    <div class="stat-card">
+                        <h3>⚠️ OS Sem Nota Fiscal</h3>
+                        <div class="value">${resumo.nfse.os_sem_nota || 0}</div>
+                        <div class="subtitle">OS encerradas sem NF</div>
+                    </div>
                 `;
             }
 
@@ -591,6 +614,20 @@
                     </tr>
                 `).join('');
             }
+            
+            // Tabela de OS sem nota fiscal
+            if (auditData.detalhes_recebimentos_vs_nfse) {
+                const tbody = document.querySelector('#osSemNfTable tbody');
+                tbody.innerHTML = auditData.detalhes_recebimentos_vs_nfse.map(item => `
+                    <tr>
+                        <td>${item.os_recebimentos || 'N/A'}</td>
+                        <td>${item.cliente_recebimentos || 'N/A'}</td>
+                        <td>R$ ${formatCurrency(item.valor_recebimentos)}</td>
+                        <td>${item.data_recebimentos || 'N/A'}</td>
+                        <td><span class="status-badge ${getStatusClass(item.status)}">${item.status}</span></td>
+                    </tr>
+                `).join('');
+            }
         }
 
         function showTab(tabName) {
@@ -606,7 +643,7 @@
         function getStatusClass(status) {
             if ((status.includes('CORRESPONDÊNCIA') && !status.includes('SEM')) || status.includes('COINCIDENTE') || status.includes('OK')) {
                 return 'status-ok';
-            } else if (status.includes('SEM CORRESPONDÊNCIA') || status.includes('NÃO ENCONTRADA') || status.includes('ERRO')) {
+            } else if (status.includes('SEM CORRESPONDÊNCIA') || status.includes('NÃO ENCONTRADA') || status.includes('ERRO') || status.includes('SEM NOTA FISCAL')) {
                 return 'status-error';
             } else {
                 return 'status-warning';

@@ -212,6 +212,14 @@ def load_banco_pix_json(json_path: str) -> List[PixTransaction]:
     logger = logging.getLogger(__name__)
     logger.info(f"Carregando JSON do banco: {json_path}")
     
+    def normaliza(texto):
+        if not texto:
+            return ''
+        texto = texto.lower().strip()
+        texto = ''.join(c for c in unicodedata.normalize('NFD', texto) if unicodedata.category(c) != 'Mn')
+        texto = texto.replace('.', '').replace('/', '').replace('-', '').replace(' ', '')
+        return texto
+    
     try:
         with open(json_path, 'r', encoding='utf-8') as f:
             data = json.load(f)
@@ -230,9 +238,15 @@ def load_banco_pix_json(json_path: str) -> List[PixTransaction]:
                     data_normalizada = data_dt.strftime('%d/%m/%Y')
                 except Exception:
                     data_normalizada = data_tx
-                    
+                
                 remetente = extract_remetente_from_description(descricao)
                 chave_pix = extract_chave_pix_from_description(descricao)
+                
+                remetente_norm = normaliza(remetente)
+                cnpj_empresa = normaliza('19.011.819/0001-82')
+                nome_empresa = normaliza('707 Motorsport')
+                if remetente_norm == nome_empresa or cnpj_empresa in remetente_norm or nome_empresa in remetente_norm:
+                    continue  # Ignora transações internas
                 
                 transaction = PixTransaction(
                     data=data_normalizada,
@@ -248,7 +262,7 @@ def load_banco_pix_json(json_path: str) -> List[PixTransaction]:
             except (ValueError, KeyError) as e:
                 logger.warning(f"Erro ao processar linha do banco: {e}")
                 continue
-        logger.info(f"Carregadas {len(transactions)} transações PIX do banco JSON")
+        logger.info(f"Carregadas {len(transactions)} transações PIX do banco JSON (após filtro de internas)")
         return transactions
         
     except Exception as e:
@@ -343,76 +357,130 @@ def load_recebimentos_excel(excel_path: str) -> List[PixTransaction]:
 
 
 def audit_cartao_transactions(cartao_df: pd.DataFrame, generated_df: pd.DataFrame) -> List[Dict]:
-    """Executa auditoria de transações de cartão"""
+    """
+    Executa auditoria de transações de cartão com regras de tolerância e agrupamento semelhantes ao PIX
+    """
     results = []
-    
+    usados_receb = set()
+    tolerancia_valor = 0.01
+    tolerancia_dias = 2
     for idx, cartao_row in cartao_df.iterrows():
         identificador = cartao_row['Identificador']
         valor_cartao = cartao_row['VALOR_AUDITORIA']
         data_cartao = cartao_row['DATA_PGTO']
         tipo_pagamento = cartao_row['TIPO_PAGAMENTO']
-        
-        # Procura registro correspondente por data
-        matching_generated = generated_df[generated_df['DATA PGTO'] == data_cartao]
-        
-        if len(matching_generated) == 0:
-            # Transação não encontrada
-            results.append({
-                'identificador': identificador,
-                'data_cartao': data_cartao,
-                'valor_cartao': valor_cartao,
-                'tipo_pagamento': tipo_pagamento,
-                'status': 'NÃO ENCONTRADA',
-                'valor_gerado': None,
-                'diferenca': None,
-                'os_correspondente': None,
-                'observacao': f'Data {data_cartao} não encontrada nos dados gerados'
-            })
-            continue
-        
-        # Procura por valor na coluna correspondente
         campo_procurado = 'CARTÃO' if tipo_pagamento == 'CARTÃO' else 'PIX'
-        valor_encontrado = None
+        match_idx = None
+        tolerancia_dias_usada = tolerancia_dias
         os_correspondente = None
-        
-        for _, gen_row in matching_generated.iterrows():
-            if campo_procurado in gen_row.index:
+        valor_encontrado = None
+        # Primeira tentativa: tolerância normal (2 dias)
+        for idx_rec, gen_row in generated_df.iterrows():
+            if idx_rec in usados_receb:
+                continue
+            if campo_procurado not in gen_row.index:
+                continue
+            valor_gen = gen_row[campo_procurado]
+            data_gen = gen_row['DATA PGTO']
+            try:
+                data_cartao_dt = pd.to_datetime(data_cartao)
+                data_gen_dt = pd.to_datetime(data_gen)
+                diff_dias = abs((data_cartao_dt - data_gen_dt).days)
+                if diff_dias > tolerancia_dias:
+                    continue
+            except:
+                if str(data_cartao) != str(data_gen):
+                    continue
+            if abs(valor_cartao - valor_gen) <= tolerancia_valor:
+                match_idx = idx_rec
+                valor_encontrado = valor_gen
+                os_correspondente = gen_row.get('N° OS', 'N/A')
+                break
+        # Segunda tentativa: tolerância maior (15 dias) se valor exato
+        if match_idx is None:
+            tolerancia_dias_usada = 15
+            for idx_rec, gen_row in generated_df.iterrows():
+                if idx_rec in usados_receb:
+                    continue
+                if campo_procurado not in gen_row.index:
+                    continue
                 valor_gen = gen_row[campo_procurado]
-                if pd.notna(valor_gen) and abs(valor_gen - valor_cartao) <= (valor_cartao * 0.01):  # 1% tolerância
+                data_gen = gen_row['DATA PGTO']
+                try:
+                    data_cartao_dt = pd.to_datetime(data_cartao)
+                    data_gen_dt = pd.to_datetime(data_gen)
+                    diff_dias = abs((data_cartao_dt - data_gen_dt).days)
+                    if diff_dias > tolerancia_dias_usada:
+                        continue
+                except:
+                    if str(data_cartao) != str(data_gen):
+                        continue
+                if valor_cartao == valor_gen:
+                    match_idx = idx_rec
                     valor_encontrado = valor_gen
                     os_correspondente = gen_row.get('N° OS', 'N/A')
                     break
-        
-        if valor_encontrado is not None:
-            # Valor encontrado
+        if match_idx is not None:
+            usados_receb.add(match_idx)
             diferenca = abs(valor_cartao - valor_encontrado)
-            is_match = diferenca <= (valor_cartao * 0.01)
-            
+            try:
+                data_cartao_dt = pd.to_datetime(data_cartao)
+                data_gen_dt = pd.to_datetime(generated_df.iloc[match_idx]['DATA PGTO'])
+                diff_dias = abs((data_cartao_dt - data_gen_dt).days)
+                obs_dias = f" (diferença de {diff_dias} dia{'s' if diff_dias != 1 else ''})" if diff_dias > 0 else ""
+                data_cartao_normalizada = data_cartao_dt.strftime('%d/%m/%Y')
+            except:
+                obs_dias = ""
+                data_cartao_normalizada = str(data_cartao)
+            if tolerancia_dias_usada > tolerancia_dias:
+                status = 'CORRESPONDÊNCIA ENCONTRADA (TOLERÂNCIA ESTENDIDA)'
+                obs_tolerancia = f" - tolerância estendida para {tolerancia_dias_usada} dias"
+            else:
+                status = 'CORRESPONDÊNCIA ENCONTRADA'
+                obs_tolerancia = ""
             results.append({
                 'identificador': identificador,
-                'data_cartao': data_cartao,
+                'data_cartao': data_cartao_normalizada,
                 'valor_cartao': valor_cartao,
                 'tipo_pagamento': tipo_pagamento,
-                'status': 'COINCIDENTE' if is_match else 'DIVERGENTE',
+                'status': status,
                 'valor_gerado': valor_encontrado,
                 'diferenca': diferenca,
                 'os_correspondente': os_correspondente,
-                'observacao': f'Encontrado na coluna {campo_procurado}'
+                'observacao': f'Valor R$ {valor_cartao:,.2f} encontrado em recebimento OS: {os_correspondente}{obs_dias}{obs_tolerancia}'
             })
-        else:
-            # Valor não encontrado
-            results.append({
-                'identificador': identificador,
-                'data_cartao': data_cartao,
-                'valor_cartao': valor_cartao,
-                'tipo_pagamento': tipo_pagamento,
-                'status': 'VALOR NÃO ENCONTRADO',
-                'valor_gerado': None,
-                'diferenca': None,
-                'os_correspondente': None,
-                'observacao': f'Valor {valor_cartao} não encontrado na coluna {campo_procurado} para a data {data_cartao}'
-            })
-    
+            continue
+        # Agrupamento: soma valores do mesmo dia
+        agrupados = generated_df[(generated_df['DATA PGTO'] == data_cartao) & (generated_df[campo_procurado].notnull())]
+        if len(agrupados) > 1:
+            soma_valores = agrupados[campo_procurado].sum()
+            if abs(soma_valores - valor_cartao) <= tolerancia_valor:
+                os_list = agrupados['N° OS'].astype(str).tolist()
+                usados_receb.update(agrupados.index)
+                results.append({
+                    'identificador': identificador,
+                    'data_cartao': data_cartao,
+                    'valor_cartao': valor_cartao,
+                    'tipo_pagamento': tipo_pagamento,
+                    'status': 'CORRESPONDÊNCIA ENCONTRADA (VALOR SOMADO)',
+                    'valor_gerado': soma_valores,
+                    'diferenca': abs(valor_cartao - soma_valores),
+                    'os_correspondente': ', '.join(os_list),
+                    'observacao': f'Valor total R$ {soma_valores:,.2f} (soma de {len(os_list)} OS) encontrado para a data {data_cartao}'
+                })
+                continue
+        # Não encontrou correspondência
+        results.append({
+            'identificador': identificador,
+            'data_cartao': data_cartao,
+            'valor_cartao': valor_cartao,
+            'tipo_pagamento': tipo_pagamento,
+            'status': 'SEM CORRESPONDÊNCIA',
+            'valor_gerado': None,
+            'diferenca': None,
+            'os_correspondente': None,
+            'observacao': f'Nenhuma correspondência encontrada para valor {valor_cartao} na data {data_cartao} (com tolerância de {tolerancia_dias} dias e agrupamento)'
+        })
     return results
 
 
@@ -851,7 +919,7 @@ def group_recebimentos_by_os(transactions: List[PixTransaction]) -> List[Grouped
     return grouped_transactions
 
 
-def generate_unified_report_json(cartao_results, pix_results, cartao_stats, recebimentos_transactions, banco_transactions, output_file, banco_pix_csv, nfse_df=None, nfse_results=None):
+def generate_unified_report_json(cartao_results, pix_results, cartao_stats, recebimentos_transactions, banco_transactions, output_file, banco_pix_csv, nfse_df=None, nfse_results=None, recebimentos_vs_nfse_results=None):
     """
     Gera relatório unificado em JSON com resumo e detalhes das auditorias.
     """
@@ -866,16 +934,18 @@ def generate_unified_report_json(cartao_results, pix_results, cartao_stats, rece
                 'sem_correspondencia': len([r for r in pix_results if r['status'] == 'SEM CORRESPONDÊNCIA']),
             },
             'nfse': {
-                'total_notas': len(nfse_df) if nfse_df is not None else 0,
-                'total_correspondencias': len([r for r in nfse_results if r['status'] == 'COINCIDENTE']) if nfse_results is not None else 0,
-                'nao_encontradas': len([r for r in nfse_results if r['status'] == 'NÃO ENCONTRADA']) if nfse_results is not None else 0,
-            } if nfse_df is not None and nfse_results is not None else {},
+                'total_notas': len(nfse_df) if nfse_df is not None and hasattr(nfse_df, 'shape') else 0,
+                'total_correspondencias': len([r for r in (nfse_results or []) if r['status'] == 'COINCIDENTE']),
+                'nao_encontradas': len([r for r in (nfse_results or []) if r['status'] == 'NÃO ENCONTRADA']),
+                'os_sem_nota': len([r for r in (recebimentos_vs_nfse_results or []) if r['status'] == 'SEM NOTA FISCAL']),
+            },
         }
         relatorio = {
             'resumo': resumo,
             'detalhes_cartao': cartao_results,
             'detalhes_pix': pix_results,
             'detalhes_nfse': nfse_results,
+            'detalhes_recebimentos_vs_nfse': recebimentos_vs_nfse_results,
         }
         with open(output_file, 'w', encoding='utf-8') as f:
             json.dump(relatorio, f, ensure_ascii=False, indent=2, default=str)
@@ -1245,6 +1315,129 @@ def extract_chave_pix_from_description(descricao: str) -> Optional[str]:
         return None
 
 
+def audit_recebimentos_vs_nfse(recebimentos_path: str, nfse_df: pd.DataFrame) -> List[Dict]:
+    """
+    Audita OS encerradas que não possuem nota fiscal correspondente
+    
+    Args:
+        recebimentos_path: Caminho para o arquivo de recebimentos
+        nfse_df: DataFrame com dados das notas fiscais
+        
+    Returns:
+        List[Dict]: Lista com resultados da auditoria
+    """
+    logger = logging.getLogger(__name__)
+    logger.info("Iniciando auditoria Recebimentos vs NFSe (OS sem nota fiscal)...")
+    
+    results = []
+    
+    try:
+        # Carrega dados de recebimentos baseado na extensão do arquivo
+        if recebimentos_path.lower().endswith('.json'):
+            recebimentos_df = pd.read_json(recebimentos_path, orient='records')
+            logger.info(f"Carregados {len(recebimentos_df)} registros de recebimentos do JSON")
+        else:
+            recebimentos_df = pd.read_excel(recebimentos_path)
+            logger.info(f"Carregados {len(recebimentos_df)} registros de recebimentos do Excel")
+        
+        # Normaliza colunas dos recebimentos
+        recebimentos_df = recebimentos_df.copy()
+        
+        # Calcula valor líquido (MÃO DE OBRA + DESCONTO) para cada recebimento
+        if 'VALOR MÃO DE OBRA' in recebimentos_df.columns and 'DESCONTO' in recebimentos_df.columns:
+            recebimentos_df['VALOR_LIQUIDO'] = recebimentos_df['VALOR MÃO DE OBRA'] + recebimentos_df['DESCONTO']
+        else:
+            recebimentos_df['VALOR_LIQUIDO'] = recebimentos_df.get('VALOR MÃO DE OBRA', 0)
+        
+        # Filtra apenas recebimentos com valor líquido > 0 (que deveriam ter nota fiscal)
+        recebimentos_com_valor = recebimentos_df[recebimentos_df['VALOR_LIQUIDO'] > 0].copy()
+        logger.info(f"Recebimentos com valor líquido > 0: {len(recebimentos_com_valor)}")
+        
+        # Se não houver notas fiscais, todas as OS com valor líquido > 0 são pendentes
+        if nfse_df is None or nfse_df.empty:
+            for _, recebimento_row in recebimentos_com_valor.iterrows():
+                numero_os = recebimento_row.get('N° OS')
+                valor_liquido = recebimento_row.get('VALOR_LIQUIDO', 0)
+                data_pgto = recebimento_row.get('DATA PGTO')
+                cliente = recebimento_row.get('CÓDIGO CLIENTE', 'N/A')
+                # Normaliza a data para DD/MM/YYYY
+                data_pgto_normalizada = data_pgto
+                if isinstance(data_pgto, str):
+                    try:
+                        if 'T' in data_pgto:
+                            data_dt = pd.to_datetime(data_pgto)
+                            data_pgto_normalizada = data_dt.strftime('%d/%m/%Y')
+                        else:
+                            data_dt = pd.to_datetime(data_pgto, dayfirst=True, errors='coerce')
+                            if pd.notnull(data_dt):
+                                data_pgto_normalizada = data_dt.strftime('%d/%m/%Y')
+                    except Exception:
+                        pass
+                elif pd.notnull(data_pgto):
+                    try:
+                        data_dt = pd.to_datetime(data_pgto)
+                        data_pgto_normalizada = data_dt.strftime('%d/%m/%Y')
+                    except Exception:
+                        pass
+                results.append({
+                    'os_recebimentos': numero_os,
+                    'cliente_recebimentos': cliente,
+                    'valor_recebimentos': valor_liquido,
+                    'data_recebimentos': data_pgto_normalizada,
+                    'status': 'SEM NOTA FISCAL',
+                    'observacao': f'OS {numero_os} - Cliente {cliente}'
+                })
+            logger.info(f"Sem notas fiscais carregadas: todas as OS com valor líquido > 0 marcadas como pendentes.")
+            return results
+        # Caso contrário, segue lógica normal
+        for _, recebimento_row in recebimentos_com_valor.iterrows():
+            numero_os = recebimento_row.get('N° OS')
+            valor_liquido = recebimento_row.get('VALOR_LIQUIDO', 0)
+            data_pgto = recebimento_row.get('DATA PGTO')
+            cliente = recebimento_row.get('CÓDIGO CLIENTE', 'N/A')
+            if not numero_os or valor_liquido <= 0:
+                continue
+            # Normaliza a data para DD/MM/YYYY
+            data_pgto_normalizada = data_pgto
+            if isinstance(data_pgto, str):
+                try:
+                    if 'T' in data_pgto:
+                        data_dt = pd.to_datetime(data_pgto)
+                        data_pgto_normalizada = data_dt.strftime('%d/%m/%Y')
+                    else:
+                        data_dt = pd.to_datetime(data_pgto, dayfirst=True, errors='coerce')
+                        if pd.notnull(data_dt):
+                            data_pgto_normalizada = data_dt.strftime('%d/%m/%Y')
+                except Exception:
+                    pass
+            elif pd.notnull(data_pgto):
+                try:
+                    data_dt = pd.to_datetime(data_pgto)
+                    data_pgto_normalizada = data_dt.strftime('%d/%m/%Y')
+                except Exception:
+                    pass
+            # Procura correspondência nas notas fiscais
+            matching_nfse = []
+            if 'valor_total' in nfse_df.columns:
+                matching_nfse = nfse_df[
+                    nfse_df['valor_total'].round(2) == round(valor_liquido, 2)
+                ]
+            if len(matching_nfse) == 0:
+                results.append({
+                    'os_recebimentos': numero_os,
+                    'cliente_recebimentos': cliente,
+                    'valor_recebimentos': valor_liquido,
+                    'data_recebimentos': data_pgto_normalizada,
+                    'status': 'SEM NOTA FISCAL',
+                    'observacao': f'OS {numero_os} - Cliente {cliente}'
+                })
+        logger.info(f"Auditoria Recebimentos vs NFSe concluída: {len(results)} OS sem nota fiscal")
+        return results
+    except Exception as e:
+        logger.error(f"Erro na auditoria Recebimentos vs NFSe: {e}")
+        return []
+
+
 def executar_auditoria(cartao_csv: str, banco_csv: str, recebimentos_path: str, nfse_directory: str = None, output_file: str = None):
     """
     Executa a auditoria unificada com os arquivos especificados
@@ -1341,10 +1534,10 @@ def executar_auditoria(cartao_csv: str, banco_csv: str, recebimentos_path: str, 
         # Calcula estatísticas do cartão
         cartao_stats = {
             'total_transacoes': len(cartao_df),
-            'cartao_encontradas': len([r for r in cartao_results if r['tipo_pagamento'] == 'CARTÃO' and r['status'] == 'COINCIDENTE']),
-            'pix_encontradas': len([r for r in cartao_results if r['tipo_pagamento'] == 'PIX' and r['status'] == 'COINCIDENTE']),
-            'nao_encontradas': len([r for r in cartao_results if r['status'] in ['NÃO ENCONTRADA', 'VALOR NÃO ENCONTRADO']]),
-            'valores_coincidentes': len([r for r in cartao_results if r['status'] == 'COINCIDENTE']),
+            'cartao_encontradas': len([r for r in cartao_results if r['tipo_pagamento'] == 'CARTÃO' and 'CORRESPONDÊNCIA ENCONTRADA' in r['status']]),
+            'pix_encontradas': len([r for r in cartao_results if r['tipo_pagamento'] == 'PIX' and 'CORRESPONDÊNCIA ENCONTRADA' in r['status']]),
+            'nao_encontradas': len([r for r in cartao_results if r['status'] in ['NÃO ENCONTRADA', 'VALOR NÃO ENCONTRADO', 'SEM CORRESPONDÊNCIA']]),
+            'valores_coincidentes': len([r for r in cartao_results if 'CORRESPONDÊNCIA ENCONTRADA' in r['status']]),
             'valores_divergentes': len([r for r in cartao_results if r['status'] == 'DIVERGENTE'])
         }
         
@@ -1353,14 +1546,19 @@ def executar_auditoria(cartao_csv: str, banco_csv: str, recebimentos_path: str, 
         
         # Executa auditoria NFSe vs Recebimentos (se dados disponíveis)
         nfse_results = None
+        recebimentos_vs_nfse_results = None
         if nfse_df is not None and not nfse_df.empty:
             logger.info("Executando auditoria NFSe vs Recebimentos...")
             nfse_results = audit_nfse_vs_recebimentos(nfse_df, recebimentos_path)
         
+        # Executa auditoria Recebimentos vs NFSe (sempre, independente de ter notas fiscais)
+        logger.info("Executando auditoria Recebimentos vs NFSe...")
+        recebimentos_vs_nfse_results = audit_recebimentos_vs_nfse(recebimentos_path, nfse_df)
+        
         logger.info("Gerando relatório unificado...")
         
         # Gera relatório unificado
-        generate_unified_report_json(cartao_results, pix_results, cartao_stats, recebimentos_transactions, banco_transactions, output_file, banco_csv, nfse_df, nfse_results)
+        generate_unified_report_json(cartao_results, pix_results, cartao_stats, recebimentos_transactions, banco_transactions, output_file, banco_csv, nfse_df, nfse_results, recebimentos_vs_nfse_results)
         
         logger.info(f"✅ Auditoria unificada concluída!")
         logger.info(f"📊 Relatório salvo em: {output_file}")
@@ -1375,6 +1573,8 @@ def executar_auditoria(cartao_csv: str, banco_csv: str, recebimentos_path: str, 
         if nfse_results is not None and nfse_results:
             logger.info(f"NFSe vs Recebimentos - Coincidentes: {len([r for r in nfse_results if r['status'] == 'COINCIDENTE'])}")
             logger.info(f"NFSe vs Recebimentos - Não encontradas: {len([r for r in nfse_results if r['status'] == 'NÃO ENCONTRADA'])}")
+        if recebimentos_vs_nfse_results is not None and recebimentos_vs_nfse_results:
+            logger.info(f"Recebimentos vs NFSe - OS sem nota fiscal: {len([r for r in recebimentos_vs_nfse_results if r['status'] == 'SEM NOTA FISCAL'])}")
         
         return output_file
         
@@ -1471,10 +1671,10 @@ def main():
         # Calcula estatísticas do cartão
         cartao_stats = {
             'total_transacoes': len(cartao_df),
-            'cartao_encontradas': len([r for r in cartao_results if r['tipo_pagamento'] == 'CARTÃO' and r['status'] == 'COINCIDENTE']),
-            'pix_encontradas': len([r for r in cartao_results if r['tipo_pagamento'] == 'PIX' and r['status'] == 'COINCIDENTE']),
-            'nao_encontradas': len([r for r in cartao_results if r['status'] in ['NÃO ENCONTRADA', 'VALOR NÃO ENCONTRADO']]),
-            'valores_coincidentes': len([r for r in cartao_results if r['status'] == 'COINCIDENTE']),
+            'cartao_encontradas': len([r for r in cartao_results if r['tipo_pagamento'] == 'CARTÃO' and 'CORRESPONDÊNCIA ENCONTRADA' in r['status']]),
+            'pix_encontradas': len([r for r in cartao_results if r['tipo_pagamento'] == 'PIX' and 'CORRESPONDÊNCIA ENCONTRADA' in r['status']]),
+            'nao_encontradas': len([r for r in cartao_results if r['status'] in ['NÃO ENCONTRADA', 'VALOR NÃO ENCONTRADO', 'SEM CORRESPONDÊNCIA']]),
+            'valores_coincidentes': len([r for r in cartao_results if 'CORRESPONDÊNCIA ENCONTRADA' in r['status']]),
             'valores_divergentes': len([r for r in cartao_results if r['status'] == 'DIVERGENTE'])
         }
         
@@ -1483,14 +1683,19 @@ def main():
         
         # Executa auditoria NFSe vs Recebimentos (se dados disponíveis)
         nfse_results = None
+        recebimentos_vs_nfse_results = None
         if nfse_df is not None and not nfse_df.empty:
             logger.info("Executando auditoria NFSe vs Recebimentos...")
             nfse_results = audit_nfse_vs_recebimentos(nfse_df, recebimentos_path)
         
+        # Executa auditoria Recebimentos vs NFSe (sempre, independente de ter notas fiscais)
+        logger.info("Executando auditoria Recebimentos vs NFSe...")
+        recebimentos_vs_nfse_results = audit_recebimentos_vs_nfse(recebimentos_path, nfse_df)
+        
         logger.info("Gerando relatório unificado...")
         
         # Gera relatório unificado
-        generate_unified_report_json(cartao_results, pix_results, cartao_stats, recebimentos_transactions, banco_transactions, report_file, banco_csv, nfse_df, nfse_results)
+        generate_unified_report_json(cartao_results, pix_results, cartao_stats, recebimentos_transactions, banco_transactions, report_file, banco_csv, nfse_df, nfse_results, recebimentos_vs_nfse_results)
         
         logger.info(f"✅ Auditoria unificada concluída!")
         logger.info(f"📊 Relatório salvo em: {report_file}")
