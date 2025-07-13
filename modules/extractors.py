@@ -33,7 +33,7 @@ def validate_required_columns(df: pd.DataFrame, table_name: str, expected_column
         logging.error(f"Colunas encontradas: {list(df.columns)}")
         raise ExtractionError(error_msg)
     
-    logging.info(f"✅ Validação de colunas da tabela {table_name} passou")
+    logging.info(f"[OK] Validação de colunas da tabela {table_name} passou")
     return True
 
 
@@ -82,7 +82,7 @@ def get_ordens(conn) -> pd.DataFrame:
         validate_required_columns(df, 'ORDEMS', expected_columns)
         
         # Log detalhado da extração
-        logging.info(f"✅ Extração ORDEMS concluída: {len(df)} registros")
+        logging.info(f"[OK] Extração ORDEMS concluída: {len(df)} registros")
         logging.info(f"   Colunas extraídas: {list(df.columns)}")
         
         # Log de estatísticas básicas
@@ -140,7 +140,7 @@ def get_contas(conn) -> pd.DataFrame:
         validate_required_columns(df, 'CONTAS', expected_columns)
         
         # Log detalhado da extração
-        logging.info(f"✅ Extração CONTAS concluída: {len(df)} registros")
+        logging.info(f"[OK] Extração CONTAS concluída: {len(df)} registros")
         logging.info(f"   Colunas extraídas: {list(df.columns)}")
         
         # Log de estatísticas básicas
@@ -195,7 +195,7 @@ def get_fcaixa(conn) -> pd.DataFrame:
         validate_required_columns(df, 'FCAIXA', expected_columns)
         
         # Log detalhado da extração
-        logging.info(f"✅ Extração FCAIXA concluída: {len(df)} registros")
+        logging.info(f"[OK] Extração FCAIXA concluída: {len(df)} registros")
         logging.info(f"   Colunas extraídas: {list(df.columns)}")
         
         # Log de estatísticas básicas
@@ -253,7 +253,7 @@ def get_extraction_summary(ordens_df: pd.DataFrame, contas_df: pd.DataFrame, fca
             'total_records': len(ordens_df) + len(contas_df) + len(fcaixa_df)
         }
         
-        logging.info("📊 RESUMO DA EXTRAÇÃO:")
+        logging.info("[RESUMO] RESUMO DA EXTRAÇÃO:")
         logging.info(f"   Total de registros: {summary['total_records']}")
         logging.info(f"   ORDEMS: {summary['tables']['ORDEMS']['records']} registros")
         logging.info(f"   CONTAS: {summary['tables']['CONTAS']['records']} registros")
@@ -280,7 +280,7 @@ def extract_all_data(conn) -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame]:
         ExtractionError: Se houver erro em qualquer extração
     """
     try:
-        logging.info("🚀 Iniciando extração completa de dados...")
+        logging.info("[INICIO] Iniciando extração completa de dados...")
         
         # Extrai dados de todas as tabelas
         ordens_df = get_ordens(conn)
@@ -290,7 +290,7 @@ def extract_all_data(conn) -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame]:
         # Gera resumo para auditoria
         summary = get_extraction_summary(ordens_df, contas_df, fcaixa_df)
         
-        logging.info("✅ Extração completa concluída com sucesso!")
+        logging.info("[OK] Extração completa concluída com sucesso!")
         
         return ordens_df, contas_df, fcaixa_df
         

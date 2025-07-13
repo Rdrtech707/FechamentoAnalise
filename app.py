@@ -11,6 +11,7 @@ from modules.access_db import get_connection_context, DatabaseConnectionError, t
 from modules.extractors import extract_all_data, ExtractionError
 from modules.processors import process_recebimentos
 from modules.exporters import export_to_excel
+from modules.export_json import export_to_json
 
 
 def setup_logging():
@@ -78,7 +79,7 @@ def main():
         # Testa conexão com banco antes de prosseguir
         logger.info("Testando conexão com banco de dados...")
         if not test_connection(MDB_FILE, MDB_PASSWORD):
-            print("❌ Falha no teste de conexão com banco de dados")
+            print("[ERRO] Falha no teste de conexão com banco de dados")
             return
         
         # Obtém informações do banco
@@ -99,7 +100,7 @@ def main():
             logger.info(f"Período selecionado: {periodo}")
         except ValueError as e:
             logger.error(f"Erro na validação de input: {e}")
-            print(f"❌ Erro: {e}")
+            print(f"[ERRO] Erro: {e}")
             return
         
         # Conecta e extrai dados usando context manager
@@ -121,20 +122,20 @@ def main():
                         
                 except ExtractionError as e:
                     logger.error(f"Erro na extração de dados: {e}")
-                    print(f"❌ Erro na extração de dados: {e}")
+                    print(f"[ERRO] Erro na extração de dados: {e}")
                     return
                 except Exception as e:
                     logger.error(f"Erro inesperado na extração: {e}")
-                    print(f"❌ Erro inesperado na extração: {e}")
+                    print(f"[ERRO] Erro inesperado na extração: {e}")
                     return
                     
         except DatabaseConnectionError as e:
             logger.error(f"Erro de conexão com banco de dados: {e}")
-            print(f"❌ Erro de conexão com banco de dados: {e}")
+            print(f"[ERRO] Erro de conexão com banco de dados: {e}")
             return
         except Exception as e:
             logger.error(f"Erro inesperado na conexão: {e}")
-            print(f"❌ Erro inesperado na conexão: {e}")
+            print(f"[ERRO] Erro inesperado na conexão: {e}")
             return
 
         # Processa recebimentos
@@ -144,7 +145,7 @@ def main():
             logger.info(f"Processamento concluído: {len(recibos)} registros processados")
         except Exception as e:
             logger.error(f"Erro no processamento: {e}")
-            print(f"❌ Erro no processamento dos dados: {e}")
+            print(f"[ERRO] Erro no processamento dos dados: {e}")
             return
 
         # Remove hora, mantendo apenas a data
@@ -187,31 +188,43 @@ def main():
                         border_theme='default'  # Pode ser alterado para 'corporate', 'dark', 'minimal'
                     )
                     logger.info(f"Arquivo Excel gerado com sucesso em {OUTPUT_DIR}")
-                    print(f"✅ Arquivo gerado: {OUTPUT_DIR}/Recebimentos_{periodo}.xlsx")
+                    print(f"[OK] Arquivo gerado: {OUTPUT_DIR}/Recebimentos_{periodo}.xlsx")
+                    # Exporta também para JSON
+                    try:
+                        json_path = export_to_json(
+                            df_periodo,
+                            output_dir=OUTPUT_DIR,
+                            filename=f"Recebimentos_{periodo}",
+                            logger=logger
+                        )
+                        print(f"[OK] Arquivo JSON gerado: {json_path}")
+                    except Exception as e:
+                        logger.error(f"Erro ao exportar para JSON: {e}")
+                        print(f"[ERRO] Erro ao gerar arquivo JSON: {e}")
                 except Exception as e:
                     logger.error(f"Erro ao exportar para Excel: {e}")
-                    print(f"❌ Erro ao gerar arquivo Excel: {e}")
+                    print(f"[ERRO] Erro ao gerar arquivo Excel: {e}")
                     return
             else:
                 logger.warning(f"Nenhum registro encontrado para o período {periodo}")
-                print(f"⚠️ Nenhum registro encontrado para o período {periodo}")
+                print(f"[AVISO] Nenhum registro encontrado para o período {periodo}")
         except Exception as e:
             logger.error(f"Erro ao filtrar por período: {e}")
-            print(f"❌ Erro ao filtrar dados por período: {e}")
+            print(f"[ERRO] Erro ao filtrar dados por período: {e}")
             return
         
         logger.info("Processamento concluído com sucesso")
-        print("✅ Processamento concluído com sucesso!")
+        print("[OK] Processamento concluído com sucesso!")
         
     except KeyboardInterrupt:
         logger.info("Aplicação interrompida pelo usuário")
-        print("\n⚠️ Aplicação interrompida pelo usuário")
+        print("\n[AVISO] Aplicação interrompida pelo usuário")
     except ConfigError as e:
         logger.error(f"Erro de configuração: {e}")
-        print(f"❌ Erro de configuração: {e}")
+        print(f"[ERRO] Erro de configuração: {e}")
     except Exception as e:
         logger.error(f"Erro inesperado: {e}", exc_info=True)
-        print(f"❌ Erro inesperado: {e}")
+        print(f"[ERRO] Erro inesperado: {e}")
         print("Consulte o arquivo app.log para mais detalhes")
 
 

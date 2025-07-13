@@ -312,8 +312,45 @@ def extract_chave_pix_from_description(descricao: str) -> Optional[str]:
         return None
 
 
+def load_recebimentos_json(json_path: str) -> List[PixTransaction]:
+    """Carrega transações PIX da tabela de recebimentos em formato JSON"""
+    logger = logging.getLogger(__name__)
+    logger.info(f"Carregando JSON de recebimentos: {json_path}")
+    
+    try:
+        df = pd.read_json(json_path, orient='records')
+        transactions = []
+        
+        for _, row in df.iterrows():
+            try:
+                # Verifica se tem valor PIX
+                valor_pix = row.get('PIX', 0)
+                if pd.notna(valor_pix) and float(valor_pix) > 0:
+                    data_pgto = str(row.get('DATA PGTO', '')).strip()
+                    if data_pgto and data_pgto != 'nan':
+                        transaction = PixTransaction(
+                            data=data_pgto,
+                            valor=float(valor_pix),
+                            descricao=f"Recebimento PIX - OS: {row.get('N° OS', 'N/A')}",
+                            origem='recebimentos',
+                            referencia=str(row.get('N° OS', '')).strip()
+                        )
+                        transactions.append(transaction)
+                        
+            except (ValueError, KeyError) as e:
+                logger.warning(f"Erro ao processar linha de recebimentos: {e}")
+                continue
+        
+        logger.info(f"Carregadas {len(transactions)} transações PIX dos recebimentos")
+        return transactions
+        
+    except Exception as e:
+        logger.error(f"Erro ao carregar JSON de recebimentos: {e}")
+        return []
+
+
 def load_recebimentos_excel(excel_path: str) -> List[PixTransaction]:
-    """Carrega transações PIX da tabela de recebimentos"""
+    """Carrega transações PIX da tabela de recebimentos (mantido para compatibilidade)"""
     logger = logging.getLogger(__name__)
     logger.info(f"Carregando Excel de recebimentos: {excel_path}")
     
@@ -1040,7 +1077,7 @@ def apply_worksheet_formatting(worksheet, df, theme, border_config):
     optimize_column_widths(worksheet, df)
 
 
-def audit_nfse_vs_recebimentos(nfse_df: pd.DataFrame, recebimentos_df: pd.DataFrame) -> List[Dict]:
+def audit_nfse_vs_recebimentos(nfse_df: pd.DataFrame, recebimentos_path: str) -> List[Dict]:
     """
     Audita a comparação entre notas fiscais e valores de mão de obra dos recebimentos
     
@@ -1057,6 +1094,14 @@ def audit_nfse_vs_recebimentos(nfse_df: pd.DataFrame, recebimentos_df: pd.DataFr
     results = []
     
     try:
+        # Carrega dados de recebimentos baseado na extensão do arquivo
+        if recebimentos_path.lower().endswith('.json'):
+            recebimentos_df = pd.read_json(recebimentos_path, orient='records')
+            logger.info(f"Carregados {len(recebimentos_df)} registros de recebimentos do JSON")
+        else:
+            recebimentos_df = pd.read_excel(recebimentos_path)
+            logger.info(f"Carregados {len(recebimentos_df)} registros de recebimentos do Excel")
+        
         # Normaliza colunas dos recebimentos
         recebimentos_df = recebimentos_df.copy()
         
@@ -1174,7 +1219,7 @@ def audit_nfse_vs_recebimentos(nfse_df: pd.DataFrame, recebimentos_df: pd.DataFr
         return []
 
 
-def executar_auditoria(cartao_csv: str, banco_csv: str, recebimentos_excel: str, nfse_directory: str = None, output_file: str = None):
+def executar_auditoria(cartao_csv: str, banco_csv: str, recebimentos_path: str, nfse_directory: str = None, output_file: str = None):
     """
     Executa a auditoria unificada com os arquivos especificados
     
@@ -1201,8 +1246,8 @@ def executar_auditoria(cartao_csv: str, banco_csv: str, recebimentos_excel: str,
         if not os.path.exists(banco_csv):
             raise FileNotFoundError(f"Arquivo CSV do banco não encontrado: {banco_csv}")
         
-        if not os.path.exists(recebimentos_excel):
-            raise FileNotFoundError(f"Arquivo Excel de recebimentos não encontrado: {recebimentos_excel}")
+        if not os.path.exists(recebimentos_path):
+            raise FileNotFoundError(f"Arquivo de recebimentos não encontrado: {recebimentos_path}")
         
         # Verifica se a pasta das notas fiscais existe (se fornecida)
         if nfse_directory and not os.path.exists(nfse_directory):
@@ -1212,25 +1257,32 @@ def executar_auditoria(cartao_csv: str, banco_csv: str, recebimentos_excel: str,
         logger.info("Carregando dados...")
         logger.info(f"📄 Cartão: {os.path.basename(cartao_csv)}")
         logger.info(f"🏦 Banco: {os.path.basename(banco_csv)}")
-        logger.info(f"📊 Recebimentos: {os.path.basename(recebimentos_excel)}")
+        logger.info(f"📊 Recebimentos: {os.path.basename(recebimentos_path)}")
         if nfse_directory:
             logger.info(f"📋 Notas Fiscais: {os.path.basename(nfse_directory)}")
         
         # Carrega dados de cartão
         cartao_df = parse_cartao_csv(cartao_csv)
         
-        # Carrega dados gerados
+        # Carrega dados gerados baseado na extensão do arquivo
         auditor = DataAuditor(tolerance_percentage=0.01)
-        generated_df = auditor.load_generated_data(recebimentos_excel)
+        if recebimentos_path.lower().endswith('.json'):
+            generated_df = pd.read_json(recebimentos_path, orient='records')
+            logger.info(f"Carregados {len(generated_df)} registros de recebimentos do JSON")
+        else:
+            generated_df = auditor.load_generated_data(recebimentos_path)
         generated_df = auditor.normalize_column_names(generated_df)
         
         # Converte DATA PGTO para date se necessário
         if 'DATA PGTO' in generated_df.columns:
             generated_df['DATA PGTO'] = pd.to_datetime(generated_df['DATA PGTO']).dt.date
         
-        # Carrega dados PIX
+        # Carrega dados PIX baseado na extensão do arquivo
         banco_transactions = load_banco_pix_csv(banco_csv)
-        recebimentos_transactions = load_recebimentos_excel(recebimentos_excel)
+        if recebimentos_path.lower().endswith('.json'):
+            recebimentos_transactions = load_recebimentos_json(recebimentos_path)
+        else:
+            recebimentos_transactions = load_recebimentos_excel(recebimentos_path)
         
         # Carrega dados das notas fiscais (se pasta fornecida)
         nfse_df = None
@@ -1267,7 +1319,7 @@ def executar_auditoria(cartao_csv: str, banco_csv: str, recebimentos_excel: str,
         nfse_results = None
         if nfse_df is not None and not nfse_df.empty:
             logger.info("Executando auditoria NFSe vs Recebimentos...")
-            nfse_results = audit_nfse_vs_recebimentos(nfse_df, generated_df)
+            nfse_results = audit_nfse_vs_recebimentos(nfse_df, recebimentos_path)
         
         logger.info("Gerando relatório unificado...")
         
@@ -1321,7 +1373,7 @@ def main():
         # Extrai caminhos dos arquivos
         cartao_csv = files['cartao_csv']
         banco_csv = files['banco_csv']
-        recebimentos_excel = files['recebimentos_excel']
+        recebimentos_path = files['recebimentos_excel']  # Mantém compatibilidade com GUI
         report_file = "data/relatorios/auditoria_unificada_completa.xlsx"
         
         # Verifica se os arquivos existem
@@ -1333,30 +1385,37 @@ def main():
             logger.error(f"Arquivo CSV do banco não encontrado: {banco_csv}")
             return
         
-        if not os.path.exists(recebimentos_excel):
-            logger.error(f"Arquivo Excel de recebimentos não encontrado: {recebimentos_excel}")
+        if not os.path.exists(recebimentos_path):
+            logger.error(f"Arquivo de recebimentos não encontrado: {recebimentos_path}")
             return
         
         logger.info("Carregando dados...")
         logger.info(f"📄 Cartão: {os.path.basename(cartao_csv)}")
         logger.info(f"🏦 Banco: {os.path.basename(banco_csv)}")
-        logger.info(f"📊 Recebimentos: {os.path.basename(recebimentos_excel)}")
+        logger.info(f"📊 Recebimentos: {os.path.basename(recebimentos_path)}")
         
         # Carrega dados de cartão
         cartao_df = parse_cartao_csv(cartao_csv)
         
-        # Carrega dados gerados
+        # Carrega dados gerados baseado na extensão do arquivo
         auditor = DataAuditor(tolerance_percentage=0.01)
-        generated_df = auditor.load_generated_data(recebimentos_excel)
+        if recebimentos_path.lower().endswith('.json'):
+            generated_df = pd.read_json(recebimentos_path, orient='records')
+            logger.info(f"Carregados {len(generated_df)} registros de recebimentos do JSON")
+        else:
+            generated_df = auditor.load_generated_data(recebimentos_path)
         generated_df = auditor.normalize_column_names(generated_df)
         
         # Converte DATA PGTO para date se necessário
         if 'DATA PGTO' in generated_df.columns:
             generated_df['DATA PGTO'] = pd.to_datetime(generated_df['DATA PGTO']).dt.date
         
-        # Carrega dados PIX
+        # Carrega dados PIX baseado na extensão do arquivo
         banco_transactions = load_banco_pix_csv(banco_csv)
-        recebimentos_transactions = load_recebimentos_excel(recebimentos_excel)
+        if recebimentos_path.lower().endswith('.json'):
+            recebimentos_transactions = load_recebimentos_json(recebimentos_path)
+        else:
+            recebimentos_transactions = load_recebimentos_excel(recebimentos_path)
         
         logger.info("Executando auditorias...")
         
@@ -1380,7 +1439,7 @@ def main():
         nfse_results = None
         if nfse_df is not None and not nfse_df.empty:
             logger.info("Executando auditoria NFSe vs Recebimentos...")
-            nfse_results = audit_nfse_vs_recebimentos(nfse_df, generated_df)
+            nfse_results = audit_nfse_vs_recebimentos(nfse_df, recebimentos_path)
         
         logger.info("Gerando relatório unificado...")
         

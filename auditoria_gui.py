@@ -38,16 +38,17 @@ class AuditoriaGUI:
         
         # Log inicial sobre configurações
         if os.path.exists(self.cache_file):
-            self.log_message("✅ Configurações carregadas do cache")
+            self.log_message("[OK] Configurações carregadas do cache")
         else:
-            self.log_message("📝 Usando configurações padrão")
+            self.log_message("[INFO] Usando configurações padrão")
     
     def load_config(self):
         """Carrega configurações do cache"""
+        # Configuração padrão sugere JSON
         default_config = {
             "cartao_csv": "data/extratos/report_20250628_194465.csv",
             "banco_csv": "data/extratos/NU_636868111_01JUN2025_27JUN2025.csv",
-            "recebimentos_excel": "data/recebimentos/Recebimentos_2025-06.xlsx",
+            "recebimentos_excel": "data/recebimentos/Recebimentos_2025-06.json",
             "nfse_directory": "data/06-JUN",
             "output_dir": "data/relatorios",
             "open_report": True
@@ -137,9 +138,9 @@ class AuditoriaGUI:
         ttk.Button(input_frame, text="Selecionar", command=lambda: self.select_file(self.banco_csv, [("CSV files", "*.csv")])).grid(row=1, column=2, pady=2)
         
         # Excel de recebimentos
-        ttk.Label(input_frame, text="Excel de Recebimentos:").grid(row=2, column=0, sticky="w", pady=2)
+        ttk.Label(input_frame, text="Recebimentos (Excel ou JSON):").grid(row=2, column=0, sticky="w", pady=2)
         ttk.Entry(input_frame, textvariable=self.recebimentos_excel, width=50).grid(row=2, column=1, padx=5, pady=2)
-        ttk.Button(input_frame, text="Selecionar", command=lambda: self.select_file(self.recebimentos_excel, [("Excel files", "*.xlsx")])).grid(row=2, column=2, pady=2)
+        ttk.Button(input_frame, text="Selecionar", command=lambda: self.select_file(self.recebimentos_excel, [("Excel/JSON files", "*.xlsx *.xls *.json"), ("Todos arquivos", "*.*")])).grid(row=2, column=2, pady=2)
         
         # Pasta das Notas Fiscais (NFSe)
         ttk.Label(input_frame, text="Pasta das Notas Fiscais (NFSe):").grid(row=3, column=0, sticky="w", pady=2)
@@ -184,8 +185,12 @@ class AuditoriaGUI:
                                   height=2, width=20)
         self.audit_button.pack(side=tk.LEFT, padx=10)
         
+        # Botão para executar app.py
+        self.run_app_button = ttk.Button(button_frame, text="📅 Executar Recebimentos (app.py)", command=self.run_app_py)
+        self.run_app_button.pack(side=tk.LEFT, padx=10)
+        
         # Botões secundários
-        self.cancel_button = ttk.Button(button_frame, text="❌ Cancelar", 
+        self.cancel_button = ttk.Button(button_frame, text="[X] Cancelar", 
                   command=self.root.quit)
         self.cancel_button.pack(side=tk.RIGHT, padx=5)
         
@@ -283,7 +288,7 @@ class AuditoriaGUI:
         files_to_check = [
             ("CSV do Cartão", self.cartao_csv.get()),
             ("CSV do Banco", self.banco_csv.get()),
-            ("Excel de Recebimentos", self.recebimentos_excel.get())
+            ("Recebimentos", self.recebimentos_excel.get())
         ]
         
         # Verifica se a pasta das notas fiscais existe
@@ -340,7 +345,7 @@ class AuditoriaGUI:
             auditoria_unificada_completa.executar_auditoria(
                 cartao_csv=self.cartao_csv.get(),
                 banco_csv=self.banco_csv.get(),
-                recebimentos_excel=self.recebimentos_excel.get(),
+                recebimentos_path=self.recebimentos_excel.get(),
                 nfse_directory=self.nfse_directory.get(),
                 output_file=output_file
             )
@@ -364,6 +369,117 @@ class AuditoriaGUI:
             self.clear_button.config(state="normal")
             self.reset_config_button.config(state="normal")
             self.cancel_button.config(state="normal")
+    
+    def run_app_py(self):
+        """Executa o app.py pela interface, perguntando ano e mês"""
+        # Cria janela de diálogo para ano e mês
+        dialog = tk.Toplevel(self.root)
+        dialog.title("Executar Recebimentos (app.py)")
+        dialog.minsize(340, 180)  # Tamanho mínimo confortável
+        dialog.transient(self.root)
+        dialog.grab_set()
+        
+        # Centraliza a janela
+        dialog.update_idletasks()
+        x = self.root.winfo_rootx() + (self.root.winfo_width() // 2) - 170
+        y = self.root.winfo_rooty() + (self.root.winfo_height() // 2) - 90
+        dialog.geometry(f"+{x}+{y}")
+        
+        # Variáveis para ano e mês
+        ano_var = tk.StringVar()
+        mes_var = tk.StringVar()
+        
+        # Interface do diálogo
+        tk.Label(dialog, text="Informe o ano e mês:", font=("Arial", 11, "bold")).pack(pady=(18, 8))
+        
+        # Frame para os campos
+        input_frame = ttk.Frame(dialog)
+        input_frame.pack(pady=8, padx=18, fill=tk.X)
+        
+        ttk.Label(input_frame, text="Ano (YYYY):").grid(row=0, column=0, padx=8, pady=8, sticky="e")
+        ano_entry = ttk.Entry(input_frame, textvariable=ano_var, width=12)
+        ano_entry.grid(row=0, column=1, padx=8, pady=8)
+        
+        ttk.Label(input_frame, text="Mês (MM):").grid(row=1, column=0, padx=8, pady=8, sticky="e")
+        mes_entry = ttk.Entry(input_frame, textvariable=mes_var, width=12)
+        mes_entry.grid(row=1, column=1, padx=8, pady=8)
+        
+        # Foca no primeiro campo
+        ano_entry.focus()
+        
+        def executar():
+            ano = ano_var.get().strip()
+            mes = mes_var.get().strip()
+            
+            if not ano or not mes:
+                messagebox.showerror("Erro", "Por favor, informe o ano e mês!", parent=dialog)
+                return
+            
+            # Valida se são números
+            if not ano.isdigit() or not mes.isdigit():
+                messagebox.showerror("Erro", "Ano e mês devem ser números!", parent=dialog)
+                return
+            
+            # Fecha o diálogo
+            dialog.destroy()
+            
+            # Executa app.py em thread
+            def run():
+                import subprocess
+                try:
+                    self.log_message(f"Executando app.py para {ano}-{mes}...")
+                    
+                    process = subprocess.Popen(
+                        [sys.executable, "app.py"],
+                        stdin=subprocess.PIPE,
+                        stdout=subprocess.PIPE,
+                        stderr=subprocess.STDOUT,
+                        text=True,
+                        bufsize=1,
+                        universal_newlines=True
+                    )
+                    
+                    # Envia ano e mês como input
+                    process.stdin.write(f"{ano}\n")
+                    process.stdin.write(f"{mes}\n")
+                    process.stdin.flush()
+                    
+                    # Lê a saída em tempo real
+                    while True:
+                        output = process.stdout.readline()
+                        if output == '' and process.poll() is not None:
+                            break
+                        if output:
+                            self.log_message(output.strip())
+                    
+                    process.wait()
+                    if process.returncode == 0:
+                        self.log_message("[OK] app.py executado com sucesso!")
+                    else:
+                        self.log_message(f"[ERRO] app.py retornou código {process.returncode}")
+                        
+                except Exception as e:
+                    self.log_message(f"Erro ao executar app.py: {e}")
+            
+            threading.Thread(target=run, daemon=True).start()
+        
+        def cancelar():
+            dialog.destroy()
+            self.log_message("Execução cancelada pelo usuário")
+        
+        # Frame para botões
+        button_frame = ttk.Frame(dialog)
+        button_frame.pack(pady=(8, 16))
+        
+        ttk.Button(button_frame, text="Executar", command=executar, width=12).pack(side=tk.LEFT, padx=10)
+        ttk.Button(button_frame, text="Cancelar", command=cancelar, width=12).pack(side=tk.LEFT, padx=10)
+        
+        # Bind Enter para executar
+        dialog.bind('<Return>', lambda e: executar())
+        dialog.bind('<Escape>', lambda e: cancelar())
+        
+        # Aguarda o usuário fechar a janela
+        dialog.wait_window()
     
     def run(self):
         """Executa a interface gráfica"""

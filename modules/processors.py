@@ -13,7 +13,7 @@ def _prepara_ordens(ordens_df: pd.DataFrame) -> pd.DataFrame:
     Returns:
         pd.DataFrame: DataFrame processado com colunas renomeadas
     """
-    logging.info("📋 Processando tabela ORDEMS...")
+    logging.info("[PROCESSO] Processando tabela ORDEMS...")
     ordens = ordens_df.copy()
     
     # Calcula VALOR TOTAL conforme especificação
@@ -34,7 +34,7 @@ def _prepara_ordens(ordens_df: pd.DataFrame) -> pd.DataFrame:
         'VALOR MÃO DE OBRA', 'VALOR PEÇAS', 'DESCONTO', 'VEÍCULO (PLACA)'
     ]]
     
-    logging.info(f"✅ ORDEMS processada: {len(ordens_proc)} registros")
+    logging.info(f"[OK] ORDEMS processada: {len(ordens_proc)} registros")
     return ordens_proc
 
 
@@ -48,7 +48,7 @@ def _extrai_receitas(fcaixa_df: pd.DataFrame) -> Tuple[pd.Series, pd.Series]:
     Returns:
         Tuple[pd.Series, pd.Series]: (pix_receita, dinheiro_receita)
     """
-    logging.info("💰 Processando tabela FCAIXA...")
+    logging.info("[DINHEIRO] Processando tabela FCAIXA...")
     fcaixa = fcaixa_df.copy()
     
     # Extrai código numérico da coluna COD_CONTA
@@ -64,7 +64,7 @@ def _extrai_receitas(fcaixa_df: pd.DataFrame) -> Tuple[pd.Series, pd.Series]:
     pix_receita = fcaixa[fcaixa['FORMA'] == 0].groupby('COD_CONTA_NUM')['RECEITA'].sum()
     dinheiro_receita = fcaixa[fcaixa['FORMA'] == 5].groupby('COD_CONTA_NUM')['RECEITA'].sum()
     
-    logging.info(f"✅ FCAIXA processada: {len(fcaixa)} registros")
+    logging.info(f"[OK] FCAIXA processada: {len(fcaixa)} registros")
     logging.info(f"   Receitas PIX (FORMA=0): {len(pix_receita)} registros")
     logging.info(f"   Receitas Dinheiro (FORMA=5): {len(dinheiro_receita)} registros")
     
@@ -103,7 +103,7 @@ def _processa_contas_pagas(
     Returns:
         pd.DataFrame: DataFrame agregado por OS
     """
-    logging.info("💳 Processando tabela CONTAS (pagas)...")
+    logging.info("[CARTAO] Processando tabela CONTAS (pagas)...")
     contas_pagas = contas_df.copy()
     
     # Converte CODIGO para numérico
@@ -167,7 +167,7 @@ def _processa_contas_pagas(
         'DATA_PGTO': 'DATA PGTO'
     })
     
-    logging.info(f"✅ CONTAS (pagas) processada: {len(agg_pagas)} registros")
+    logging.info(f"[OK] CONTAS (pagas) processada: {len(agg_pagas)} registros")
     return agg_pagas
 
 
@@ -181,7 +181,7 @@ def _processa_contas_devidas(contas_df: pd.DataFrame) -> pd.Series:
     Returns:
         pd.Series: Series com valores devidos por OS
     """
-    logging.info("💸 Processando tabela CONTAS (devidas)...")
+    logging.info("[DEVIDO] Processando tabela CONTAS (devidas)...")
     contas_devidas = contas_df.copy()
     
     # Converte CODIGO para numérico
@@ -199,7 +199,7 @@ def _processa_contas_devidas(contas_df: pd.DataFrame) -> pd.Series:
     # Agrega DEVEDOR por OS
     agg_devidas = contas_devidas.groupby('OS')['VALOR'].sum().rename('DEVEDOR')
     
-    logging.info(f"✅ CONTAS (devidas) processada: {len(agg_devidas)} registros")
+    logging.info(f"[OK] CONTAS (devidas) processada: {len(agg_devidas)} registros")
     return agg_devidas
 
 
@@ -237,7 +237,7 @@ def process_recebimentos(
         pd.DataFrame: Tabela consolidada de recebimentos
     """
     try:
-        logging.info("🔄 Iniciando processamento de recebimentos...")
+        logging.info("[PROCESSO] Iniciando processamento de recebimentos...")
         
         # Prepara ordens
         ordens_proc = _prepara_ordens(ordens_df)
@@ -252,7 +252,7 @@ def process_recebimentos(
         agg_devidas = _processa_contas_devidas(contas_df)
         
         # Merge final com as ordens
-        logging.info("🔗 Fazendo merge final...")
+        logging.info("[MERGE] Fazendo merge final...")
         final = ordens_proc.merge(agg_pagas, left_on='N° OS', right_index=True, how='left')
         final = final.merge(agg_devidas, left_on='N° OS', right_index=True, how='left')
         
@@ -273,7 +273,7 @@ def process_recebimentos(
         
         final = final[colunas_finais]
         
-        logging.info(f"✅ Processamento concluído: {len(final)} registros finais")
+        logging.info(f"[OK] Processamento concluído: {len(final)} registros finais")
         logging.info(f"   Colunas finais: {list(final.columns)}")
         
         return final
